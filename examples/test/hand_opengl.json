@@ -1,0 +1,68 @@
+{
+  "Axial_system": "OPENGL",
+  "cameras": [
+    {
+      "NameColor": "viewport",
+      "Position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Depth_range": [
+        0.35,
+        5.0
+      ],
+      "Resolution": [
+        640,
+        480
+      ],
+      "Projection": "Perspective",
+      "Focal": [
+        615.122802734375,
+        615.3558349609375
+      ],
+      "Principle_point": [
+        321.0250549316406,
+        243.24197387695312
+      ]
+    },
+    {
+      "NameColor": "v00_texture.mp4",
+      "NameDepth": "v00_depth.mp4",
+      "Position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Depth_range": [
+        0.35,
+        5.0
+      ],
+      "Resolution": [
+        640,
+        480
+      ],
+      "Projection": "Perspective",
+      "Focal": [
+        615.122802734375,
+        615.3558349609375
+      ],
+      "Principle_point": [
+        321.0250549316406,
+        243.24197387695312
+      ],
+      "BitDepthColor": 8,
+      "BitDepthDepth": 8
+    }
+  ]
+}

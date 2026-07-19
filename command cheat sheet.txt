@@ -1,0 +1,198 @@
+===========================================================
+OpenDIBR Command Cheat Sheet
+===========================================================
+
+Go to executable folder first:
+
+cd "C:\Users\Syncard\Documents\NTHU Intern\open-dibr\bin\Release"
+
+===========================================================
+FAN DATASET
+===========================================================
+
+[1] Normal Rendering
+
+.\RealtimeDIBR.exe -i ../../examples/Fan -j ../../examples/Fan/example_opengl.json --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[2] Show Input Cameras
+
+.\RealtimeDIBR.exe -i ../../examples/Fan -j ../../examples/Fan/example_opengl.json --show_inputs --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[3] Static Rendering (Frame 50)
+
+.\RealtimeDIBR.exe -i ../../examples/Fan -j ../../examples/Fan/example_opengl.json --static --frame_nr 50 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[4] Input Culling (Use Only 2 Cameras)
+
+.\RealtimeDIBR.exe -i ../../examples/Fan -j ../../examples/Fan/example_opengl.json --max_nr_inputs 2 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[5] FPS Measurement
+
+.\RealtimeDIBR.exe -i ../../examples/Fan -j ../../examples/Fan/example_opengl.json --fps_csv ./fan_fps.csv --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[6] Save Output View
+
+.\RealtimeDIBR.exe -i ../../examples/Fan -j ../../examples/Fan/example_opengl.json -p ../../examples/Fan/example_output.json -o .
+
+
+===========================================================
+PAINTER DATASET
+===========================================================
+
+[1] Normal Rendering
+
+.\RealtimeDIBR.exe -i ../../examples/Painter -j ../../examples/Painter/example_opengl.json --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[2] Show Input Cameras
+
+.\RealtimeDIBR.exe -i ../../examples/Painter -j ../../examples/Painter/example_opengl.json --show_inputs --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[3] Static Rendering (Frame 50)
+
+.\RealtimeDIBR.exe -i ../../examples/Painter -j ../../examples/Painter/example_opengl.json --static --frame_nr 50 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[4] Input Culling (Use Only 2 Cameras)
+
+.\RealtimeDIBR.exe -i ../../examples/Painter -j ../../examples/Painter/example_opengl.json --max_nr_inputs 2 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[5] FPS Measurement
+
+.\RealtimeDIBR.exe -i ../../examples/Painter -j ../../examples/Painter/example_opengl.json --fps_csv ./painter_fps.csv --triangle_deletion_margin 10
+
+
+===========================================================
+CARPARK DATASET (MPEG MIV)
+===========================================================
+
+[1] Normal Rendering
+
+.\RealtimeDIBR.exe -i ../../examples/carpark -j ../../examples/carpark/carpark_opendibr.json --max_nr_inputs 4 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[2] Light Version
+
+.\RealtimeDIBR.exe -i ../../examples/carpark -j ../../examples/carpark/carpark_opendibr.json --max_nr_inputs 2 --mesh_subdivisions 1 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[3] Show Input Cameras
+
+.\RealtimeDIBR.exe -i ../../examples/carpark -j ../../examples/carpark/carpark_opendibr.json --show_inputs --max_nr_inputs 4 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[4] Static Rendering
+
+.\RealtimeDIBR.exe -i ../../examples/carpark -j ../../examples/carpark/carpark_opendibr.json --static --frame_nr 0 --triangle_deletion_margin 10
+
+
+-----------------------------------------------------------
+
+[5] FPS Measurement
+
+.\RealtimeDIBR.exe -i ../../examples/carpark -j ../../examples/carpark/carpark_opendibr.json --fps_csv ./carpark_fps.csv --max_nr_inputs 4 --triangle_deletion_margin 10
+
+
+===========================================================
+PARAMETER EXPERIMENTS
+===========================================================
+
+Triangle Deletion Margin
+
+5     -> --triangle_deletion_margin 5
+10    -> --triangle_deletion_margin 10
+20    -> --triangle_deletion_margin 20
+
+
+-----------------------------------------------------------
+
+Mesh Resolution
+
+Highest Quality
+
+--mesh_subdivisions 0
+
+Medium
+
+--mesh_subdivisions 1
+
+Fast
+
+--mesh_subdivisions 2
+
+
+-----------------------------------------------------------
+
+Input Cameras
+
+All Cameras
+
+--max_nr_inputs -1
+
+Use 4 Cameras
+
+--max_nr_inputs 4
+
+Use 2 Cameras
+
+--max_nr_inputs 2
+
+Use 1 Camera
+
+--max_nr_inputs 1
+
+
+===========================================================
+KEYBOARD CONTROLS
+===========================================================
+
+W A S D      Move Camera
+Q / Z        Forward / Backward
+Left Mouse   Rotate Camera
+Mouse Wheel  Zoom
+Esc          Exit
+
+G            Decrease Triangle Deletion Margin
+H            Increase Triangle Deletion Margin
+
+B            Decrease Blending Factor
+N            Increase Blending Factor
+
+C            Slow Camera
+V            Speed Up Camera
+
+R            Toggle Show Input Camera Window
+(only when --show_inputs is enabled)
+
+===========================================================
