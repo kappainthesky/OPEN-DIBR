@@ -15,6 +15,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavcodec/avcodec.h>
+#include <libavcodec/bsf.h>
 }
 #include "NvCodecUtils.h"
 
@@ -57,7 +58,9 @@ public:
     FFmpegDemuxer(const char* szFilePath, bool printInfo = false, int64_t timeScale = 1000 /*Hz*/) {
 
 		avformat_network_init();
+#if LIBAVFORMAT_VERSION_INT < AV_VERSION_INT(58, 9, 100)
 		av_register_all();
+#endif
 		ck(avformat_open_input(&fmtc, szFilePath, NULL, NULL));
         if (!fmtc) {
             std::cout << "No AVFormatContext provided for " << szFilePath << ", Check if the filepath is correct" << std::endl;

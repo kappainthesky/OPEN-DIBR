@@ -11,22 +11,40 @@ try:
     import numpy as np
     import mediapipe as mp
     import pyrealsense2 as rs
-    _ = mp.solutions.face_mesh
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
 except (ImportError, AttributeError):
-    # Try to find a compatible Python interpreter on the system (e.g. Python 3.11)
-    candidates = [
-        r"C:\Users\Syncard\AppData\Local\Programs\Python\Python311\python.exe",
-        r"C:\Users\Syncard\AppData\Local\Programs\Python\Python313\python.exe",
-        r"C:\Python314\python.exe",
-    ]
-    try:
-        output = subprocess.check_output(["where", "python"], text=True)
-        for line in output.strip().splitlines():
-            line = line.strip()
-            if line and line not in candidates:
-                candidates.append(line)
-    except Exception:
-        pass
+    # Try to find a compatible Python interpreter on the system (e.g. Python 3.11/3.12/3.13)
+    if os.name == 'nt':
+        candidates = [
+            r"C:\Users\Syncard\AppData\Local\Programs\Python\Python311\python.exe",
+            r"C:\Users\Syncard\AppData\Local\Programs\Python\Python313\python.exe",
+            r"C:\Python314\python.exe",
+        ]
+        try:
+            output = subprocess.check_output(["where", "python"], text=True)
+            for line in output.strip().splitlines():
+                line = line.strip()
+                if line and line not in candidates:
+                    candidates.append(line)
+        except Exception:
+            pass
+    else:
+        candidates = [
+            "/usr/bin/python3",
+            "/usr/bin/python3.13",
+            "/usr/bin/python3.12",
+            "/usr/bin/python3.11",
+            "/usr/local/bin/python3",
+        ]
+        try:
+            output = subprocess.check_output(["which", "-a", "python3"], text=True)
+            for line in output.strip().splitlines():
+                line = line.strip()
+                if line and line not in candidates:
+                    candidates.append(line)
+        except Exception:
+            pass
 
     for candidate in candidates:
         if not os.path.exists(candidate):
@@ -34,7 +52,7 @@ except (ImportError, AttributeError):
         if os.path.abspath(candidate) == os.path.abspath(sys.executable):
             continue
         try:
-            test_cmd = [candidate, "-c", "import cv2; import numpy; import mediapipe as mp; _ = mp.solutions.face_mesh; import pyrealsense2"]
+            test_cmd = [candidate, "-c", "import cv2; import numpy; import mediapipe as mp; from mediapipe.tasks import python; from mediapipe.tasks.python import vision; import pyrealsense2"]
             subprocess.check_call(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"[Launcher] Current Python ({sys.version.split()[0]}) is missing dependencies or incompatible.")
             print(f"[Launcher] Switching to compatible Python: {candidate}")
@@ -56,7 +74,8 @@ import json
 from datetime import datetime
 import socket
 
-mp_face_mesh = mp.solutions.face_mesh
+
+
 
 LEFT_IRIS  = [474, 475, 476, 477]
 RIGHT_IRIS = [469, 470, 471, 472]
@@ -218,12 +237,18 @@ def emit_eye_position(eye_mid_mm, timestamp):
 
 # Main loop
 
-with mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
+model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_landmarker.task")
+base_options = python.BaseOptions(model_asset_path=model_path)
+options = vision.FaceLandmarkerOptions(
+    base_options=base_options,
+    running_mode=vision.RunningMode.IMAGE,
+    num_faces=1,
+    min_face_detection_confidence=0.5,
+    min_face_presence_confidence=0.5,
     min_tracking_confidence=0.5
-) as face_mesh:
+)
+
+with vision.FaceLandmarker.create_from_options(options) as landmarker:
 
     print("Running — press Q to quit")
 
@@ -240,15 +265,27 @@ with mp_face_mesh.FaceMesh(
             # Since we don't have a depth sensor, create a mock depth image (filled with 600 mm)
             depth_img = np.full((480, 640), 600, dtype=np.uint16)
         else:
-            frames  = pipeline.wait_for_frames()
-            aligned = align.process(frames)
-            color_frame = aligned.get_color_frame()
-            depth_frame = aligned.get_depth_frame()
-            if not color_frame or not depth_frame:
-                continue
+            try:
+                frames  = pipeline.wait_for_frames()
+                aligned = align.process(frames)
+                color_frame = aligned.get_color_frame()
+                depth_frame = aligned.get_depth_frame()
+                if not color_frame or not depth_frame:
+                    continue
 
-            color_img = np.asanyarray(color_frame.get_data())
-            depth_img = np.asanyarray(depth_frame.get_data())
+                color_img = np.asanyarray(color_frame.get_data())
+                depth_img = np.asanyarray(depth_frame.get_data())
+            except RuntimeError as e:
+                print(f"\n[RealSense Error during stream]: {e}")
+                print("Falling back to standard Webcam...")
+                USE_WEBCAM = True
+                cap = cv.VideoCapture(0)
+                if not cap.isOpened():
+                    print("Error: Could not open standard Webcam!")
+                fx, fy = 600.0, 600.0
+                cx, cy = 320.0, 240.0
+                cx = (CAPTURE_WIDTH - 1) - cx
+                continue
 
         # flip both consistently so pixel coords line up after the flip
         frame     = cv.flip(color_img, 1)
@@ -256,13 +293,14 @@ with mp_face_mesh.FaceMesh(
 
         img_h, img_w = frame.shape[:2]
         rgb_frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        results   = face_mesh.process(rgb_frame)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        results   = landmarker.detect(mp_image)
         display   = frame.copy()
 
-        if results.multi_face_landmarks:
+        if results.face_landmarks:
             mesh_points = np.array([
                 np.multiply([p.x, p.y], [img_w, img_h]).astype(int)
-                for p in results.multi_face_landmarks[0].landmark
+                for p in results.face_landmarks[0]
             ])
 
             # Stage 2: iris landmarks

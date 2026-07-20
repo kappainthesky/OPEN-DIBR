@@ -1,11 +1,24 @@
 #ifndef EYE_TRACKER_RECEIVER_H
 #define EYE_TRACKER_RECEIVER_H
 
+#ifdef _WIN32
 #include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <arpa/inet.h>
+typedef int SOCKET;
+#define INVALID_SOCKET -1
+#define SOCKET_ERROR -1
+#endif
+
 #include <iostream>
 #include <string>
-
-#pragma comment(lib, "ws2_32.lib")
+#include <cstring>
+#include <cstdio>
 
 class EyeTrackerReceiver {
 private:
@@ -23,20 +36,25 @@ public:
     ~EyeTrackerReceiver() { Cleanup(); }
 
     bool Init(int port = 9999) {
+#ifdef _WIN32
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
             std::cerr << "[EyeTracker] WSAStartup failed." << std::endl;
             return false;
         }
+#endif
 
         m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (m_socket == INVALID_SOCKET) {
             std::cerr << "[EyeTracker] Socket creation failed." << std::endl;
+#ifdef _WIN32
             WSACleanup();
+#endif
             return false;
         }
 
         // Set non-blocking mode
+#ifdef _WIN32
         u_long mode = 1;
         if (ioctlsocket(m_socket, FIONBIO, &mode) != 0) {
             std::cerr << "[EyeTracker] Failed to set non-blocking mode." << std::endl;
@@ -44,6 +62,14 @@ public:
             WSACleanup();
             return false;
         }
+#else
+        int flags = fcntl(m_socket, F_GETFL, 0);
+        if (flags == -1 || fcntl(m_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
+            std::cerr << "[EyeTracker] Failed to set non-blocking mode." << std::endl;
+            close(m_socket);
+            return false;
+        }
+#endif
 
         sockaddr_in addr;
         addr.sin_family = AF_INET;
@@ -52,8 +78,12 @@ public:
 
         if (bind(m_socket, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             std::cerr << "[EyeTracker] Bind failed on port " << port << "." << std::endl;
+#ifdef _WIN32
             closesocket(m_socket);
             WSACleanup();
+#else
+            close(m_socket);
+#endif
             return false;
         }
 
@@ -114,10 +144,16 @@ public:
     void Cleanup() {
         if (m_initialized) {
             if (m_socket != INVALID_SOCKET) {
+#ifdef _WIN32
                 closesocket(m_socket);
+#else
+                close(m_socket);
+#endif
                 m_socket = INVALID_SOCKET;
             }
+#ifdef _WIN32
             WSACleanup();
+#endif
             m_initialized = false;
             m_hasFirstPacket = false;
         }

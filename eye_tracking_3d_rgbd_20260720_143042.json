@@ -1,0 +1,43 @@
+{
+  "session_start_unix": 1784529042.2327313,
+  "session_duration_s": 10.93,
+  "depth_source": "RealSense D455 aligned depth sensor",
+  "camera_intrinsics": {
+    "fx": 600.0,
+    "fy": 600.0,
+    "cx": 319.0,
+    "cy": 240.0
+  },
+  "screen_calibration": {
+    "calibrated": false,
+    "rotation_matrix": [
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "translation_mm": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "note": "no screen calibration applied \u2014 identity transform, camera-space coordinates"
+  },
+  "resolution": {
+    "width": 640,
+    "height": 480
+  },
+  "num_frames": 0,
+  "frames": []
+}
