@@ -11,6 +11,14 @@
 void SpinUntilTargetTime(Uint64 startTime, float targetTime) {
 	float passedTimeMs = (SDL_GetPerformanceCounter() - startTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
 	while (passedTimeMs < targetTime) {
+		float remainingMs = targetTime - passedTimeMs;
+		if (remainingMs > 1.5f) {
+			SDL_Delay(1); // yield CPU slice to decoder and tracker threads
+		} else {
+			#if defined(__x86_64__) || defined(_M_X64)
+				__builtin_ia32_pause();
+			#endif
+		}
 		passedTimeMs = (SDL_GetPerformanceCounter() - startTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
 	}
 }
@@ -36,6 +44,13 @@ public:
 	void AddTime(float timeToAdd, int videoFrameNr) {
 		msPerFrame.push_back(timeToAdd);
 		videoFrameNrs.push_back(videoFrameNr);
+	}
+
+	float GetFPS() const {
+		if (msPerFrame.empty()) return 0.0f;
+		float lastMs = msPerFrame.back();
+		if (lastMs <= 0.0f) return 0.0f;
+		return 1000.0f / lastMs;
 	}
 
 	void WriteToCSVFile(std::string path, bool isStatic) {

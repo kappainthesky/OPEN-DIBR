@@ -43,11 +43,12 @@ void main()
 	bool condition1 = largest_depth_diff < triangle_deletion_margin * estimated_error + 0.01f;
 
 
-	// discard triangles that fall outside the fisheye image of the input camera (if relevant)
+	// discard triangles that fall outside the projection volume or have invalid depth
 	bool condition2 = !(vertices[0].worldPosition.w < 0 || vertices[1].worldPosition.w < 0 || vertices[2].worldPosition.w < 0);
+	bool condition3 = (vertices[0].inputDepth < near_far[1] - 0.05f) && (vertices[1].inputDepth < near_far[1] - 0.05f) && (vertices[2].inputDepth < near_far[1] - 0.05f);
 
 	// pass the triangle to the fragment shader iff all conditions are true
-	if(condition1 && condition2){ 
+	if(condition1 && condition2 && condition3){ 
 		for(int i = 0; i < 3; i++){
 			frag.TexCoord = vertices[i].TexCoord;
 			frag.angle = vertices[i].angle;

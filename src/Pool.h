@@ -7,6 +7,8 @@
 #include <queue>
 #include <condition_variable>
 #include <unordered_set>
+#include <atomic>
+#include <chrono>
 
 
 /*
@@ -37,14 +39,15 @@ class Pool {
 	std::vector<int> demux_array; // indicates which demuxers are free to start demuxing the next frame
 	bool terminate_pool = false;
 	int nrImages = 0;
-	std::vector<FFmpegDemuxer*> demuxers;
+	std::vector<IDemuxer*> demuxers;
 	std::vector<NvDecoder*> decoders;
 
 public:
+	std::atomic<float> lastDecodeTimeMs{0.0f};
 
 	Pool() {}
 
-	void init(int nrImages, std::vector<FFmpegDemuxer*> demuxers, std::vector<NvDecoder*> decoders, int nrThreads) {
+	void init(int nrImages, std::vector<IDemuxer*> demuxers, std::vector<NvDecoder*> decoders, int nrThreads) {
 		this->nrImages = nrImages;
 		this->demuxers = demuxers;
 		this->decoders = decoders;
@@ -169,7 +172,8 @@ public:
 
 			int nVideoBytes = 0;
 			uint8_t* pVideo = NULL;
-			if (!demux(inputIndex, nVideoBytes, pVideo)) {
+			bool bLooped = false;
+			if (!demux(inputIndex, nVideoBytes, pVideo, bLooped)) {
 				break;
 			}
 
@@ -187,7 +191,14 @@ public:
 
 			int decoded_picture_index = -1;
 			if (nVideoBytes) {
+				if (bLooped) {
+					// Send ENDOFSTREAM packet to NVDEC parser to flush DPB and reset picture sequence state cleanly on loop
+					decoders[inputIndex]->Decode(NULL, 0);
+				}
+				auto t_start = std::chrono::high_resolution_clock::now();
 				decoders[inputIndex]->Decode(pVideo, nVideoBytes);
+				auto t_end = std::chrono::high_resolution_clock::now();
+				lastDecodeTimeMs.store(std::chrono::duration<float, std::milli>(t_end - t_start).count());
 				decoded_picture_index = decoders[inputIndex]->picture_index;
 			}
 
@@ -225,9 +236,9 @@ public:
 
 private:
 
-	bool demux(int inputIndex, int & nVideoBytes, uint8_t* & pVideo) {
+	bool demux(int inputIndex, int & nVideoBytes, uint8_t* & pVideo, bool & bLooped) {
 		
-		if (!demuxers[inputIndex]->Demux(&pVideo, &nVideoBytes)) {
+		if (!demuxers[inputIndex]->Demux(&pVideo, &nVideoBytes, &bLooped)) {
 			if (!nVideoBytes) {
 				std::cout << "nVideoBytes = " << nVideoBytes << ", breaking" << std::endl;
 				return true;

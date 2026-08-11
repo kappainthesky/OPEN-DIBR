@@ -125,6 +125,78 @@ CARPARK DATASET (MPEG MIV)
 
 
 ===========================================================
+GSTREAMER STREAMING (LIVE INPUT)
+===========================================================
+
+Note: Always start the GStreamer Sender FIRST before running OpenDIBR.
+
+
+[1] Run GStreamer Sender (TCP Server)
+
+Linux:
+python3 gstreamer/stream_sender.py gstreamer/camera_config.json
+
+Windows:
+python gstreamer/stream_sender.py gstreamer/camera_config.json
+
+
+-----------------------------------------------------------
+
+[2] Run OpenDIBR with GStreamer Input (TCP Client Receiver)
+
+Windows:
+.\RealtimeDIBR.exe -i gstreamer -j gstreamer/camera_config.json --gstreamer-input
+
+Linux:
+./RealtimeDIBR -i gstreamer -j gstreamer/camera_config.json --gstreamer-input
+(or ./build/RealtimeDIBR -i gstreamer -j gstreamer/camera_config.json --gstreamer-input)
+
+
+-----------------------------------------------------------
+
+[3] Run OpenDIBR GStreamer with Unlocked FPS (ASAP Mode)
+
+Windows:
+.\RealtimeDIBR.exe -i gstreamer -j gstreamer/camera_config.json --gstreamer-input --asap
+
+Linux:
+./RealtimeDIBR -i gstreamer -j gstreamer/camera_config.json --gstreamer-input --asap
+
+
+-----------------------------------------------------------
+
+[4] Run OpenDIBR GStreamer with Custom Remote IP Host
+
+Windows:
+.\RealtimeDIBR.exe -i gstreamer -j gstreamer/camera_config.json --gstreamer-input --stream-host 192.168.1.50
+
+Linux:
+./RealtimeDIBR -i gstreamer -j gstreamer/camera_config.json --gstreamer-input --stream-host 192.168.1.50
+
+
+-----------------------------------------------------------
+
+[5] Run OpenDIBR GStreamer with Parameter Tuning
+
+Windows:
+.\RealtimeDIBR.exe -i gstreamer -j gstreamer/camera_config.json --gstreamer-input --triangle_deletion_margin 10 --max_nr_inputs 2
+
+Linux:
+./RealtimeDIBR -i gstreamer -j gstreamer/camera_config.json --gstreamer-input --triangle_deletion_margin 10 --max_nr_inputs 2
+
+
+-----------------------------------------------------------
+
+[6] Stream Verification & Standalone C++ Receiver
+
+Verify streams via gst-launch-1.0:
+./gstreamer/verify_streams.sh
+
+Run C++ standalone test receiver:
+./gstreamer/build/gstreamer_receiver gstreamer/camera_config.json
+
+
+===========================================================
 PARAMETER EXPERIMENTS
 ===========================================================
 

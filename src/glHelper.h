@@ -125,6 +125,8 @@ public:
 			shader.setVec2("out_f", glm::vec2(outputCamera.focal_x, outputCamera.focal_y)); 
 			shader.setVec2("out_near_far", glm::vec2(outputCamera.z_near, outputCamera.z_far));
 			shader.setVec2("out_pp", glm::vec2(outputCamera.principal_point_x, outputCamera.principal_point_y));
+			shader.setMat4("project", outputCamera.projectionLeft);
+			shader.setFloat("useOffAxis", outputCamera.useOffAxis ? 1.0f : 0.0f);
 		}
 		shader.setMat4("view", outputCamera.view);
 		shader.setVec3("outputCameraPos", glm::vec3(outputCamera.model[3])); 

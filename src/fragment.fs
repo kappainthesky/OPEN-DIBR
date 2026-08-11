@@ -36,14 +36,25 @@ void main()
 	// -------------------------------------
 	if(isYCbCr > 0.5f){
 		// color tex is YUV NV12
-		vec2 texcoord_Y = vec2(frag.TexCoord.x, frag.TexCoord.y * height/(height*1.5f + chroma_offset));
-		float Cb_x = (floor(floor(frag.TexCoord.x * width) / 2.0f) * 2.0f + 0.5f) / width;
-		float Cr_x = (floor(floor(frag.TexCoord.x * width) / 2.0f) * 2.0f + 1.5f) / width;
-		float Cb_Cr_y = (floor(floor(frag.TexCoord.y * height) / 2.0f) + 0.5f + height + chroma_offset) / (height * 1.5f + chroma_offset);
+		vec2 clamped_coord = clamp(frag.TexCoord, vec2(0.0f), vec2(1.0f));
+		vec2 texcoord_Y = vec2(clamped_coord.x, clamped_coord.y * height / (height * 1.5f + chroma_offset));
+		float Cb_x = (floor(floor(clamped_coord.x * width) / 2.0f) * 2.0f + 0.5f) / width;
+		float Cr_x = (floor(floor(clamped_coord.x * width) / 2.0f) * 2.0f + 1.5f) / width;
+		
+		float min_chroma_y = (height + chroma_offset + 0.5f) / (height * 1.5f + chroma_offset);
+		float max_chroma_y = (height * 1.5f + chroma_offset - 0.5f) / (height * 1.5f + chroma_offset);
+		float Cb_Cr_y = (floor(floor(clamped_coord.y * height) / 2.0f) + 0.5f + height + chroma_offset) / (height * 1.5f + chroma_offset);
+		Cb_Cr_y = clamp(Cb_Cr_y, min_chroma_y, max_chroma_y);
 	
 		float Y = texture(colorTex, texcoord_Y).r;
 		float Cb = texture(colorTex, vec2(Cb_x, Cb_Cr_y)).r;
 		float Cr = texture(colorTex, vec2(Cr_x, Cb_Cr_y)).r;
+
+		// Fallback to neutral chroma (128/255 = 0.50196) if sampling out-of-bounds or border padding
+		if (frag.TexCoord.x < 0.0f || frag.TexCoord.x > 1.0f || frag.TexCoord.y < 0.0f || frag.TexCoord.y > 1.0f) {
+			Cb = 128.0f / 255.0f;
+			Cr = 128.0f / 255.0f;
+		}
 
 		FragColor = vec4(Y, Cb, Cr, 1);
 
@@ -53,7 +64,7 @@ void main()
 			float r = Y + 1.370705*(Cr - 128.0f / 255.0f);
 			float g = Y - 0.698001 *(Cr - 128.0f / 255.0f) - 0.337633*(Cb - 128.0f / 255.0f);
 			float b = Y + 1.732446*(Cb - 128.0f / 255.0f);
-			FragColor = vec4(r, g, b, 1);
+			FragColor = vec4(clamp(r, 0.0f, 1.0f), clamp(g, 0.0f, 1.0f), clamp(b, 0.0f, 1.0f), 1);
 		}
 	}
 	else {

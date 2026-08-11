@@ -1,0 +1,5 @@
+Values for the OpenDIBR JSON (color camera = camera model after alignment):
+  "Resolution":      [640, 480]
+  "Focal":           [615.1229858398438, 615.3560180664062]
+  "Principle_point": [321.0249938964844, 243.24200439453125]
+  "BitDepthDepth": 8

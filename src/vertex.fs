@@ -34,6 +34,7 @@ uniform vec2 out_f;
 uniform vec2 out_pp;
 uniform vec2 out_near_far;
 uniform float isVR;
+uniform float useOffAxis;
 uniform mat4 project;    // only used in VR mode
 
 uniform sampler2D depthTex;
@@ -106,7 +107,7 @@ void main()
 	viewPosition = viewPosition / viewPosition.w;
 	vertex.outputDepth = length(viewPosition.xyz);
 
-	if(isVR > 0.5f){
+	if(isVR > 0.5f || useOffAxis > 0.5f){
 		 gl_Position = project * viewPosition;
 	}
 	else if(viewPosition.z < 0){

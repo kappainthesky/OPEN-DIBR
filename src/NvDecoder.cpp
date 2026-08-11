@@ -219,11 +219,13 @@ int NvDecoder::HandleVideoSequence(CUVIDEOFORMAT *pVideoFormat)
     }
 
     if (m_nWidth && m_nLumaHeight && m_nChromaHeight) {
-
-        // cuvidCreateDecoder() has been called before, and now there's possible config change
-		std::cout << "Reconfiguring the decoder is not allowed" << std::endl;
-		return 0;
+        // Decoder is already initialized for this stream resolution; return decode surfaces count to continue decoding
+        return nDecodeSurface;
     }
+
+    std::cout << "[NvDecoder] HandleVideoSequence called! Resolution: " << pVideoFormat->coded_width << "x" << pVideoFormat->coded_height 
+              << ", bit_depth_luma_minus8=" << (int)pVideoFormat->bit_depth_luma_minus8 
+              << ", chroma_format=" << (int)pVideoFormat->chroma_format << std::endl;
 
     // eCodec has been set in the constructor (for parser). Here it's set again for potential correction
     m_eCodec = pVideoFormat->codec;
@@ -377,6 +379,15 @@ int NvDecoder::HandlePictureDisplay(int decoded_picture_index) {
 	}
 	else {
 		m.Height = m_nLumaHeight;
+	}
+	if (m_nDecodePicCnt <= 3) {
+		std::cout << "[NvDecoder] " << (isColor ? "COLOR (RGB)" : "DEPTH") 
+		          << " Frame #" << m_nDecodePicCnt 
+		          << " Surface Stats: pitch=" << nSrcPitch 
+		          << ", width=" << GetWidth() << "x" << GetHeight() 
+		          << ", bpp=" << m_nBPP << ", surfHeight=" << m_nSurfaceHeight 
+		          << ", copyWidthBytes=" << m.WidthInBytes 
+		          << ", copyHeight=" << m.Height << std::endl;
 	}
     CUDA_DRVAPI_CALL(cuMemcpy2DAsync(&m, m_cuvidStream));
 	ck(cuGraphicsUnmapResources(1, glGraphicsResource, 0));

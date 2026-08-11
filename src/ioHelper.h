@@ -213,6 +213,7 @@ public:
 	glm::mat4 model = glm::mat4(1);
 	glm::mat4 view = glm::mat4(1);
 	bool isVR = false;
+	bool useOffAxis = false;
 	glm::mat4 projectionLeft = glm::mat4();
 	glm::mat4 projectionRight = glm::mat4();
 	int res_x = 0;
@@ -240,6 +241,7 @@ public:
 		, z_near(z_near)
 		, z_far(z_far){
 		isVR = true;
+		useOffAxis = false;
 		pos = viewport.pos;
 		rot = viewport.rot;
 		startPosMat = viewport.startPosMat;

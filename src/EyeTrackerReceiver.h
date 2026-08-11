@@ -19,6 +19,7 @@ typedef int SOCKET;
 #include <string>
 #include <cstring>
 #include <cstdio>
+#include <chrono>
 
 class EyeTrackerReceiver {
 private:
@@ -26,6 +27,9 @@ private:
     bool m_initialized = false;
     bool m_hasFirstPacket = false;
     
+    int m_latestState = 2; // default LOST
+    std::chrono::steady_clock::time_point m_lastPacketTime = std::chrono::steady_clock::now();
+
     // Calibration reference point (in mm)
     float m_refX = 0.0f;
     float m_refY = 0.0f;
@@ -71,6 +75,12 @@ public:
         }
 #endif
 
+        int optval = 1;
+        setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, (const char*)&optval, sizeof(optval));
+#ifdef SO_REUSEPORT
+        setsockopt(m_socket, SOL_SOCKET, SO_REUSEPORT, (const char*)&optval, sizeof(optval));
+#endif
+
         sockaddr_in addr;
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
@@ -105,10 +115,17 @@ public:
             if (bytesReceived > 0) {
                 buffer[bytesReceived] = '\0';
                 float tx, ty, tz;
-                if (sscanf(buffer, "%f %f %f", &tx, &ty, &tz) == 3) {
+                int stateVal = 0;
+                int parsed = sscanf(buffer, "%f %f %f %d", &tx, &ty, &tz, &stateVal);
+                if (parsed >= 3) {
                     rx = tx;
                     ry = ty;
                     rz = tz;
+                    if (parsed == 4) {
+                        m_latestState = stateVal;
+                    } else {
+                        m_latestState = 0; // default TRACKING
+                    }
                     gotNewPacket = true;
                 }
             } else {
@@ -117,11 +134,13 @@ public:
         }
 
         if (gotNewPacket) {
+            m_lastPacketTime = std::chrono::steady_clock::now();
             if (!m_hasFirstPacket) {
                 m_refX = rx;
                 m_refY = ry;
                 m_refZ = rz;
                 m_hasFirstPacket = true;
+                m_latestState = 0; // successfully calibrated
                 std::cout << "[EyeTracker] Calibration reference established at (" 
                           << m_refX << ", " << m_refY << ", " << m_refZ << ") mm." << std::endl;
             }
@@ -132,13 +151,30 @@ public:
             outDy = (-(ry - m_refY) / 1000.0f) * scaleY;
             outDz = ((rz - m_refZ) / 1000.0f) * scaleZ;
             return true;
+        } else {
+            // Check packet timeout (500 ms)
+            auto now = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastPacketTime).count();
+            if (duration > 500) {
+                m_latestState = 2; // LOST
+            }
         }
 
         return false;
     }
 
+    int GetLatestState() const {
+        return m_latestState;
+    }
+
+    float GetBaselineDistance() const {
+        if (!m_hasFirstPacket) return 0.6f;
+        return m_refZ / 1000.0f; // convert mm to meters
+    }
+
     void ResetCalibration() {
         m_hasFirstPacket = false;
+        m_latestState = 3; // RECALIBRATING
     }
 
     void Cleanup() {

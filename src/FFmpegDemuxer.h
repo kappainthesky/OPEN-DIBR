@@ -26,10 +26,17 @@ extern "C" {
 //! This header file is used by Decode/Transcode apps to demux input video clips before decoding frames from it. 
 //---------------------------------------------------------------------------
 
+class IDemuxer {
+public:
+    virtual ~IDemuxer() {}
+    virtual bool Demux(uint8_t **ppVideo, int *pnVideoBytes, bool *pbLooped = nullptr) = 0;
+    virtual AVCodecID GetVideoCodec() = 0;
+};
+
 /**
 * @brief libavformat wrapper class. Retrieves the elementary encoded stream from the container format.
 */
-class FFmpegDemuxer {
+class FFmpegDemuxer : public IDemuxer {
 private:
     AVFormatContext *fmtc = NULL;
     AVIOContext *avioc = NULL;
@@ -210,7 +217,8 @@ public:
         return eVideoCodec;
     }
 
-    bool Demux(uint8_t **ppVideo, int *pnVideoBytes) {
+    bool Demux(uint8_t **ppVideo, int *pnVideoBytes, bool *pbLooped = nullptr) {
+        if (pbLooped) *pbLooped = false;
         if (!fmtc) {
             return false;
         }
@@ -228,8 +236,11 @@ public:
         if (e < 0) {
 			if (e == AVERROR_EOF) {
 				// reached end of file, start from the beginning
-				avio_seek(fmtc->pb, 0, SEEK_SET);
-				avformat_seek_file(fmtc, iVideoStream, 0, 0, fmtc->streams[iVideoStream]->duration, 0);
+				if (pbLooped) *pbLooped = true;
+				av_seek_frame(fmtc, iVideoStream, 0, AVSEEK_FLAG_BACKWARD);
+				if (bsfc) {
+					av_bsf_flush(bsfc);
+				}
 				while ((e = av_read_frame(fmtc, &pkt)) >= 0 && pkt.stream_index != iVideoStream) {
 					av_packet_unref(&pkt);
 				}
@@ -279,6 +290,32 @@ public:
         frameCount++;
 
         return true;
+    }
+
+    int GetWidth() const { return nWidth; }
+    int GetHeight() const { return nHeight; }
+    int GetBitDepth() const { return nBitDepth; }
+    
+    double GetFPS() {
+        if (!fmtc || iVideoStream < 0) return 0.0;
+        AVRational fps_rat = fmtc->streams[iVideoStream]->avg_frame_rate;
+        if (fps_rat.num == 0 || fps_rat.den == 0) {
+            fps_rat = fmtc->streams[iVideoStream]->r_frame_rate;
+        }
+        return av_q2d(fps_rat);
+    }
+
+    int64_t GetFrameCount() {
+        if (!fmtc || iVideoStream < 0) return 0;
+        int64_t nb = fmtc->streams[iVideoStream]->nb_frames;
+        if (nb <= 0) {
+            double dur = (double)fmtc->duration / AV_TIME_BASE;
+            double fps = GetFPS();
+            if (fps > 0.0) {
+                nb = (int64_t)(dur * fps + 0.5);
+            }
+        }
+        return nb;
     }
 };
 

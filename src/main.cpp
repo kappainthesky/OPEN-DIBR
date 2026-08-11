@@ -51,9 +51,14 @@ public:
 	int blendingFactor = 0;         // the higher, the more blending there is between input color images
 	bool showCameraVisibilityWindow = false;
 	
-	int targetFps = 90;
+	int targetFps = 30;
 	bool useFpsMonitor = false;
 	bool asap = false;              // this will (decode and) play the video frames as fast as possible
+
+	bool useGStreamerInput = false; // if true, receive compressed HEVC buffers over TCP ports via GStreamer appsink
+	int colorPort = 5000;           // TCP port for color stream
+	int depthPort = 5001;           // TCP port for depth stream
+	std::string host = "127.0.0.1"; // Host IP address for TCP stream
 
 	// some tunable shader uniforms:
 	float triangle_deletion_margin = 10.0f;        // used in geometry shader for the threshold for stretched triangle deletion
@@ -61,6 +66,7 @@ public:
 												   // for now fixed at 0.05m
 	float image_border_threshold_fragment = 0.0f;  // used in fragment shader, expressed in nr pixels
 												   // determines the width of the border along the input images where pixels are blended
+	bool autoTriangleMargin = false;               // automatically calculate margin based on depth quality
 
 
 public:
@@ -84,6 +90,12 @@ public:
 			("static", "The input light field consists of PNGs, or of videos where only the \'--framenr\' frame needs to be decoded")
 			("frame_nr", "The frame that needs to be shown if the input light field consists of videos and option \'--static\' is set", cxxopts::value<int>()->default_value("0"))
 			;
+		options.add_options("GStreamer TCP Streaming")
+			("gstreamer-input", "Use live GStreamer TCP streams (HEVC) instead of MP4 files")
+			("color-port", "TCP port for color stream", cxxopts::value<int>()->default_value("5000"))
+			("depth-port", "TCP port for depth stream", cxxopts::value<int>()->default_value("5001"))
+			("stream-host", "Target host IP address for GStreamer TCP stream", cxxopts::value<std::string>()->default_value("127.0.0.1"))
+			;
 		options.add_options("Settings to improve performance")
 			("t", "Number of threads for the thread pool that decodes the videos. Should be >= 2. Recommended: #CPUcores - 1", cxxopts::value<int>()->default_value("2"))
 			("asap", "Decode and play the image/video frames as soon as possible (basically disabling the Vsync@90Hz)")
@@ -101,6 +113,7 @@ public:
 		options.add_options("Settings to improve quality")
 			("blending_factor", "The higher this factor, the more blending between inputs there is, as an int in [0,10]", cxxopts::value<int>()->default_value("1"))
 			("triangle_deletion_margin", "The higher this value, the less strict the threshold for deletion of stretched triangles.", cxxopts::value<float>()->default_value("10.0"))
+			("auto_triangle_margin", "Automatically calculate the triangle deletion margin based on depth map quality.")
 			;
 		options.add_options("Output camera settings")
 			// output camera
@@ -195,6 +208,15 @@ public:
 				exit(-1);
 			}
 		}
+		if (result.count("auto_triangle_margin")) {
+			autoTriangleMargin = true;
+			if (result.count("triangle_deletion_margin")) {
+				autoTriangleMargin = false;
+				std::cout << "[Auto-Margin] Manual triangle_deletion_margin explicitly provided. Disabling auto-margin mode." << std::endl;
+			} else {
+				std::cout << "[Auto-Margin] Automatic triangle deletion margin enabled." << std::endl;
+			}
+		}
 		if (result.count("triangle_deletion_margin")) {
 			triangle_deletion_margin = result["triangle_deletion_margin"].as<float>();
 			if (triangle_deletion_margin < 1) {
@@ -223,10 +245,10 @@ public:
 					break;
 				}
 			}
-			if (!explicitlyProvided) {
+			if (!explicitlyProvided && !autoTriangleMargin) {
 				triangle_deletion_margin = 150.0f;
 				std::cout << "[Auto-Tune] Test dataset detected. Automatically setting triangle_deletion_margin = 150.0f." << std::endl;
-			} else {
+			} else if (explicitlyProvided) {
 				std::cout << "[Auto-Tune] Test dataset detected, but respecting explicitly provided triangle_deletion_margin = " << triangle_deletion_margin << std::endl;
 			}
 		}
@@ -291,10 +313,36 @@ private:
 
 	// filter out common errors in the user-provided files and paths
 	bool inputAndOutputFilesOK(cxxopts::ParseResult result) {
-		// input_json and input_dir are required
+		if (result.count("gstreamer-input")) {
+			useGStreamerInput = true;
+			std::cout << "[GStreamer] Enabled live GStreamer TCP input mode." << std::endl;
+		}
+		if (result.count("color-port")) {
+			colorPort = result["color-port"].as<int>();
+		}
+		if (result.count("depth-port")) {
+			depthPort = result["depth-port"].as<int>();
+		}
+		if (result.count("stream-host")) {
+			host = result["stream-host"].as<std::string>();
+		}
+
+		// input_json is required
 		if (result.count("input_json"))
 		{
 			inputJsonPath = result["input_json"].as<std::string>();
+			if (fileExists(inputJsonPath)) {
+				try {
+					std::ifstream f(inputJsonPath);
+					nlohmann::json j;
+					f >> j;
+					if (j.contains("streaming")) {
+						if (j["streaming"].contains("host")) host = j["streaming"]["host"].get<std::string>();
+						if (j["streaming"].contains("color_port") && !result.count("color-port")) colorPort = j["streaming"]["color_port"].get<int>();
+						if (j["streaming"].contains("depth_port") && !result.count("depth-port")) depthPort = j["streaming"]["depth_port"].get<int>();
+					}
+				} catch (...) {}
+			}
 		}
 		else {
 			std::cout << "Missing required argument -j or --input_json" << std::endl;
@@ -303,6 +351,9 @@ private:
 		if (result.count("input_dir"))
 		{
 			inputPath = result["input_dir"].as<std::string>();
+		}
+		else if (useGStreamerInput) {
+			inputPath = "./";
 		}
 		else {
 			std::cout << "Missing required argument -i or --input_dir" << std::endl;
@@ -332,7 +383,7 @@ private:
 			return false;
 		}
 		// check if inputPath and outputPath and the folder that contains fpsCsvPath are existing folders
-		if (!dirExists(inputPath)) {
+		if (!useGStreamerInput && !dirExists(inputPath)) {
 			std::cout << "Error: could not find folder " << inputPath << std::endl;
 			return false;
 		}
@@ -402,27 +453,33 @@ private:
 			return false;
 		}
 
-		// check if .mp4 or .png files are provided, and if all inputs have the same type
-		std::string inputFileType = inputCameras[0].pathColor.substr(inputCameras[0].pathColor.size() - 3, 3);
-		for (InputCamera input : inputCameras) {
-			std::string fileTypes[2] = { input.pathColor.substr(input.pathColor.size() - 3, 3), input.pathDepth.substr(input.pathDepth.size() - 3, 3) };
-			for (std::string fileType : fileTypes) {
-				if (fileType != inputFileType) {
-					std::cout << "Error: all input cameras in the JSON need to have the same file type, i.e. the names need to end with .mp4 or .png" << std::endl;
-					return false;
-				}
-			}
-		}
-		if (inputFileType == "png" || inputFileType == "PNG") {
-			usePNGs = true;
-		}
-		else if (inputFileType == "mp4" || inputFileType == "MP4") {
+		if (useGStreamerInput) {
 			usePNGs = false;
 			ShowDecoderCapability();
 		}
 		else {
-			std::cout << "Error: all input cameras in the JSON need to be either png or mp4 files, i.e. the names need to end with .mp4 or .png" << std::endl;
-			return false;
+			// check if .mp4 or .png files are provided, and if all inputs have the same type
+			std::string inputFileType = inputCameras[0].pathColor.substr(inputCameras[0].pathColor.size() - 3, 3);
+			for (InputCamera input : inputCameras) {
+				std::string fileTypes[2] = { input.pathColor.substr(input.pathColor.size() - 3, 3), input.pathDepth.substr(input.pathDepth.size() - 3, 3) };
+				for (std::string fileType : fileTypes) {
+					if (fileType != inputFileType) {
+						std::cout << "Error: all input cameras in the JSON need to have the same file type, i.e. the names need to end with .mp4 or .png" << std::endl;
+						return false;
+					}
+				}
+			}
+			if (inputFileType == "png" || inputFileType == "PNG") {
+				usePNGs = true;
+			}
+			else if (inputFileType == "mp4" || inputFileType == "MP4") {
+				usePNGs = false;
+				ShowDecoderCapability();
+			}
+			else {
+				std::cout << "Error: all input cameras in the JSON need to be either png or mp4 files, i.e. the names need to end with .mp4 or .png" << std::endl;
+				return false;
+			}
 		}
 		// check if all inputs and outputs have the same resolution and projection (and hor_range, ver_range, fov if relevant)
 		int input_width = inputCameras[0].res_x;

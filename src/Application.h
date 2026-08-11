@@ -42,8 +42,13 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include "FFmpegDemuxer.h"
+#include "GStreamerReceiver.h"
 #include "shader.h"
 #include "ioHelper.h"
+#include "DatasetValidator.h"
+#include "AlignmentVerifier.h"
+#include "PerformanceLogger.h"
+#include "EyeTrackerReceiver.h"
 #include "glHelper.h"
 #include "Pool.h"
 #include "CameraVisibilityHelper.h"
@@ -124,7 +129,7 @@ protected:
 
 	// video decoding
 	std::vector<CUgraphicsResource*> glGraphicsResources;
-	std::vector<FFmpegDemuxer*> demuxers;
+	std::vector<IDemuxer*> demuxers;
 	std::vector<NvDecoder*> decoders;
 	CUcontext* cuContext = NULL;
 
@@ -134,6 +139,16 @@ protected:
 	int currentVideoFrame = 0;
 	float cameraSpeed = 0.01f;
 	bool controlCameraVisibilityWindow = false;
+
+	float lastFrameTimeMs = 0.0f;
+	float lastWarpingTimeMs = 0.0f;
+	float lastBlendingTimeMs = 0.0f;
+
+	EyeTrackerReceiver eyeReceiver;
+	glm::vec3 eyeOffset = glm::vec3(0.0f);
+
+	float smoothedTriangleMargin = 10.0f;
+	void AnalyzeDepthFrame(int inputIndex);
 
 	// some user input state
 	bool leftMouseDown = false;
@@ -150,7 +165,8 @@ Application::Application(Options options, FpsMonitor* fpsMonitor, std::vector<In
 	, fpsMonitor(fpsMonitor)
 	, inputCameras(inputCameras)
 	, outputCameras(outputCameras)
-	, cameraSpeed(options.cameraSpeed){
+	, cameraSpeed(options.cameraSpeed)
+	, smoothedTriangleMargin(options.triangle_deletion_margin) {
 	cuContext = new CUcontext();
 };
 
@@ -184,7 +200,21 @@ bool Application::BInit()
 	m_pContext = SDL_GL_CreateContext(m_pCompanionWindow);
 	if (m_pContext == NULL)
 	{
-		printf("%s - OpenGL context could not be created! SDL Error: %s\n", __FUNCTION__, SDL_GetError());
+		printf("%s - OpenGL 4.1 Core Context failed (%s). Retrying with OpenGL 3.3 Core...\n", __FUNCTION__, SDL_GetError());
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+		m_pContext = SDL_GL_CreateContext(m_pCompanionWindow);
+	}
+	if (m_pContext == NULL)
+	{
+		printf("%s - OpenGL 3.3 Core Context failed (%s). Retrying with Compatibility Profile...\n", __FUNCTION__, SDL_GetError());
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+		m_pContext = SDL_GL_CreateContext(m_pCompanionWindow);
+	}
+	if (m_pContext == NULL)
+	{
+		printf("%s - Critical: OpenGL context could not be created! SDL Error: %s\n", __FUNCTION__, SDL_GetError());
+		printf("Note: If running NVIDIA drivers on Linux, check if a driver/kernel update occurred without a system reboot.\n");
 		return false;
 	}
 
@@ -216,6 +246,11 @@ bool Application::BInit()
 
 bool Application::BInitGL()
 {
+	// Run Dataset Validation
+	if (!DatasetValidator::Validate(inputCameras, options.usePNGs, options.useGStreamerInput)) {
+		return false;
+	}
+
 	// the chroma data is stored "chroma_offset" rows below the luma data
 	int luma_height = inputCameras[0].res_y;
 	int luma_height_rounded = ((luma_height + 16 - 1) / 16) * 16; //round luma height up to multiple of 16
@@ -241,11 +276,13 @@ bool Application::BInitGL()
 			return false;
 		}
 	}
+
 	return true;
 }
 
 void Application::Shutdown()
 {
+
 	if (m_pContext)
 	{
 		if (m_unCompanionWindowVAO != 0)
@@ -253,6 +290,27 @@ void Application::Shutdown()
 			glDeleteVertexArrays(1, &m_unCompanionWindowVAO);
 			glDeleteBuffers(1, &m_glCompanionWindowIDVertBuffer);
 			glDeleteBuffers(1, &m_glCompanionWindowIDIndexBuffer);
+		}
+	}
+
+	if (options.useGStreamerInput && demuxers.size() >= 2) {
+		GStreamerReceiver* rgbRec = dynamic_cast<GStreamerReceiver*>(demuxers[0]);
+		GStreamerReceiver* depthRec = dynamic_cast<GStreamerReceiver*>(demuxers[1]);
+		if (rgbRec && depthRec) {
+			std::cout << "\n=============================================\n";
+			std::cout << "    [GStreamer Live Performance Metrics]\n";
+			std::cout << "=============================================\n";
+			std::cout << "Average RGB PTS Delta     : " << std::fixed << std::setprecision(2) << rgbRec->getAvgPTSDelta() << " ms\n";
+			std::cout << "Average Depth PTS Delta   : " << std::fixed << std::setprecision(2) << depthRec->getAvgPTSDelta() << " ms\n";
+			std::cout << "RGB Access Units Count    : " << rgbRec->getAppsinkAUCount() << "\n";
+			std::cout << "Depth Access Units Count  : " << depthRec->getAppsinkAUCount() << "\n";
+			std::cout << "RGB Demux Calls Count     : " << rgbRec->getDemuxCallsCount() << "\n";
+			std::cout << "Depth Demux Calls Count   : " << depthRec->getDemuxCallsCount() << "\n";
+			std::cout << "Timeout Count (RGB/Depth) : " << rgbRec->getTimeoutCount() << " / " << depthRec->getTimeoutCount() << "\n";
+			std::cout << "Rendered Frames Count     : " << currentVideoFrame << "\n";
+			double maxDiff = std::abs((rgbRec->getCurrentPTS() - depthRec->getCurrentPTS()) / 1000000.0);
+			std::cout << "Max RGB-Depth PTS Diff   : " << std::fixed << std::setprecision(2) << maxDiff << " ms\n";
+			std::cout << "=============================================\n\n";
 		}
 	}
 
@@ -317,35 +375,37 @@ void Application::RunMainLoop()
 	int frame = 0;
 
 	if (!options.asap) {
-		// decode and play the images/videos at options.targetFps fps
-		// e.g. the videos themselves are played at 30Hz while the application renders at 90Hz
 		float ms_per_frame = 1000.0f / (float)options.targetFps;
+		int frames_per_video_frame = options.targetFps / 30;
+		if (frames_per_video_frame < 1) frames_per_video_frame = 1;
 
-		Uint64 startTime = SDL_GetPerformanceCounter();
 		while (!bQuit)
 		{
+			Uint64 blockStartTime = SDL_GetPerformanceCounter();
 
-			// update the video frame (goal = 30Hz)
+			// Frame 1: Decode and Render
 			RenderFrame(true);
 			bQuit = bQuit | HandleUserInput();
+			SpinUntilTargetTime(blockStartTime, ms_per_frame);
 
-			SpinUntilTargetTime(startTime, ms_per_frame);
 			Uint64 endTime = SDL_GetPerformanceCounter();
-			float passedTimeMs = (endTime - startTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
+			float passedTimeMs = (endTime - blockStartTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
 			fpsMonitor->AddTime(passedTimeMs, frame);
-			startTime = endTime;
+			float cumulativeTime = passedTimeMs;
+			lastFrameTimeMs = passedTimeMs;
 
-			// keep rendering with the same video frame (goal = options.targetFps)
-			for (int i = 0; i < options.targetFps / 30 - 1; i++) {
-				Uint64 currentTime = SDL_GetPerformanceCounter();
+			// Remaining Frames in the 30Hz block: Just render with updated head tracking
+			for (int i = 1; i < frames_per_video_frame; i++) {
 				RenderFrame(false);
 				bQuit = bQuit | HandleUserInput();
-				SpinUntilTargetTime(currentTime, ms_per_frame);
+				SpinUntilTargetTime(blockStartTime, (i + 1) * ms_per_frame);
 
 				endTime = SDL_GetPerformanceCounter();
-				passedTimeMs = (endTime - startTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
-				fpsMonitor->AddTime(passedTimeMs, frame);
-				startTime = endTime;
+				passedTimeMs = (endTime - blockStartTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
+				float diffMs = passedTimeMs - cumulativeTime;
+				fpsMonitor->AddTime(diffMs, frame);
+				cumulativeTime = passedTimeMs;
+				lastFrameTimeMs = diffMs;
 			}
 			frame++;
 		}
@@ -375,12 +435,14 @@ void Application::RunMainLoop()
 			Uint64 endTime = SDL_GetPerformanceCounter();
 			float passedTimeMs = (endTime - startTime) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
 			fpsMonitor->AddTime(passedTimeMs, frame);
+			lastFrameTimeMs = passedTimeMs;
 			startTime = endTime;
 			frame++;
 		}
 	}
 
 	SDL_StopTextInput();
+	PerformanceLogger::SaveToCSV("performance_log.csv");
 }
 
 bool Application::RenderFrame(bool nextVideoFrame, std::string outputCameraName, int frameNr)
@@ -391,6 +453,11 @@ bool Application::RenderFrame(bool nextVideoFrame, std::string outputCameraName,
 	}
 	
 	RenderCompanionWindow();
+
+	// Log frame metrics
+	PerformanceLogger::LogFrame(frameNr, lastFrameTimeMs, fpsMonitor->GetFPS(),
+	                            pool.lastDecodeTimeMs.load(), lastWarpingTimeMs, lastBlendingTimeMs,
+	                            smoothedTriangleMargin, 45.0f);
 
 	// SwapWindow
 	{
@@ -595,9 +662,23 @@ void Application::SetupCUgraphicsResources() {
 		glGraphicsResources.push_back(glGraphicsResource_color);
 		glGraphicsResources.push_back(glGraphicsResource_depth);
 
-		// initialize the LibAV demuxers
-		FFmpegDemuxer* demuxer_color = new FFmpegDemuxer(inputCameras[i].pathColor.c_str(), i == 0);
-		FFmpegDemuxer* demuxer_depth = new FFmpegDemuxer(inputCameras[i].pathDepth.c_str());
+		// initialize demuxers
+		IDemuxer* demuxer_color = nullptr;
+		IDemuxer* demuxer_depth = nullptr;
+		if (options.useGStreamerInput) {
+			int cPort = options.colorPort + 2 * i;
+			int dPort = options.depthPort + 2 * i;
+			GStreamerReceiver* rColor = new GStreamerReceiver(cPort, 96, "ColorReceiver", options.host);
+			GStreamerReceiver* rDepth = new GStreamerReceiver(dPort, 97, "DepthReceiver", options.host);
+			rColor->SetPeer(rDepth);
+			rDepth->SetPeer(rColor);
+			demuxer_color = rColor;
+			demuxer_depth = rDepth;
+		}
+		else {
+			demuxer_color = new FFmpegDemuxer(inputCameras[i].pathColor.c_str(), i == 0);
+			demuxer_depth = new FFmpegDemuxer(inputCameras[i].pathDepth.c_str());
+		}
 		demuxers.push_back(demuxer_color);
 		demuxers.push_back(demuxer_depth);
 
@@ -615,9 +696,9 @@ bool Application::SetupDecodingPool() {
 	if (options.StartingFrameNr > 0) {
 		std::cout << "Decoding all frames up until frame " << options.StartingFrameNr << "..." << std::endl;
 	}
-	// decode until frame 'StartingFrameNr' of all input videos here
-	for (int i = 0; i < demuxers.size(); i++) {
-		for (int j = 0; j < options.StartingFrameNr + 2; j++) { // dev note: for some reason, demuxing and decoding needs to happen twice to get the first frame
+	// decode until frame 'StartingFrameNr' of all input videos here (in lockstep across streams, 4 frames warmup for 12-bit RExt NVDEC latency)
+	for (int j = 0; j < options.StartingFrameNr + 4; j++) {
+		for (int i = 0; i < demuxers.size(); i++) {
 			int nVideoBytes = 0;
 			uint8_t* pVideo = NULL;
 			if (!demuxers[i]->Demux(&pVideo, &nVideoBytes)) {
@@ -626,6 +707,10 @@ bool Application::SetupDecodingPool() {
 			}
 			decoders[i]->Decode(pVideo, nVideoBytes);
 		}
+	}
+	for (int i = 0; i < demuxers.size(); i++) {
+		std::cout << "[Startup] Demuxer " << i << " (" << (i % 2 == 0 ? "color" : "depth") 
+		          << ") final picture_index=" << decoders[i]->picture_index << std::endl;
 		// memcopy decoded image to CUGragpicsResources
 		decoders[i]->HandlePictureDisplay(decoders[i]->picture_index);
 	}
@@ -677,6 +762,18 @@ bool Application::RenderTarget(bool nextVideoFrame)
 				pool.copyFromGPUToOpenGLTexture(std::get<0>(tuple), std::get<1>(tuple), std::get<2>(tuple), std::get<3>(tuple));
 			}
 
+			if (options.autoTriangleMargin) {
+				AnalyzeDepthFrame(i);
+			}
+
+			if (isFirstInput) {
+				AlignmentVerifier::Verify(textures_color[i], textures_depth[i],
+				                          inputCameras[i].res_x, inputCameras[i].res_y,
+				                          inputCameras[i].bitdepth_depth,
+				                          inputCameras[i].z_near, inputCameras[i].z_far,
+				                          currentVideoFrame);
+			}
+
 			RenderScene(i, isFirstInput);
 
 			// prepare next iteration
@@ -704,10 +801,15 @@ bool Application::RenderTarget(bool nextVideoFrame)
 void Application::RenderScene(int i, bool isFirstInput)
 {
 	if (isFirstInput) {
+		auto t_start = std::chrono::high_resolution_clock::now();
 		// simple 3D warping
 		framebuffers.renderTheFirstInputImage(0, textures_color[i], textures_depth[i]);
+		glFinish();
+		auto t_end = std::chrono::high_resolution_clock::now();
+		lastWarpingTimeMs = std::chrono::duration<float, std::milli>(t_end - t_start).count();
 	}
 	else {
+		auto t_start = std::chrono::high_resolution_clock::now();
 		// copying between FBOs is necessary to prepare the blending
 		shaders.copyShader.use();
 		framebuffers.copyFramebuffer(0);
@@ -715,8 +817,10 @@ void Application::RenderScene(int i, bool isFirstInput)
 		// simple 3D warping + blending with the previous output image
 		shaders.shader.use();
 		framebuffers.renderNonFirstInputImage(0, textures_color[i], textures_depth[i]);
+		glFinish();
+		auto t_end = std::chrono::high_resolution_clock::now();
+		lastBlendingTimeMs = std::chrono::duration<float, std::milli>(t_end - t_start).count();
 	}
-
 }
 
 void Application::RenderCompanionWindow()
@@ -769,6 +873,105 @@ void Application::SaveCompanionWindowToYUV(int frameNr, std::string outputCamera
 	}
 	delete[] image;
 	return;
+}
+
+void Application::AnalyzeDepthFrame(int inputIndex) {
+	int width = inputCameras[inputIndex].res_x;
+	int height = inputCameras[inputIndex].res_y;
+	int bitdepth = inputCameras[inputIndex].bitdepth_depth;
+	float z_near = inputCameras[inputIndex].z_near;
+	float z_far = inputCameras[inputIndex].z_far;
+
+	// Bind the depth texture and download it to CPU
+	glBindTexture(GL_TEXTURE_2D, textures_depth[inputIndex]);
+	int pixelCount = width * height;
+	std::vector<float> depthMeters(pixelCount, 0.0f);
+
+	if (bitdepth > 8) {
+		std::vector<uint16_t> buffer(pixelCount);
+		glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_UNSIGNED_SHORT, buffer.data());
+		
+		for (int idx = 0; idx < pixelCount; ++idx) {
+			float normVal = (float)buffer[idx] / 65535.0f;
+			if (normVal > 0.0f) {
+				depthMeters[idx] = 1.0f / (1.0f / z_far + normVal * (1.0f / z_near - 1.0f / z_far));
+			}
+		}
+	} else {
+		std::vector<uint8_t> buffer(pixelCount);
+		glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_UNSIGNED_BYTE, buffer.data());
+		
+		for (int idx = 0; idx < pixelCount; ++idx) {
+			float normVal = (float)buffer[idx] / 255.0f;
+			if (normVal > 0.0f) {
+				depthMeters[idx] = 1.0f / (1.0f / z_far + normVal * (1.0f / z_near - 1.0f / z_far));
+			}
+		}
+	}
+
+	// Downsample for analysis to keep CPU overhead minimal (stride of 8 pixels)
+	int stride = 8;
+	double sumGrad = 0.0;
+	int gradCount = 0;
+	int invalidCount = 0;
+	int totalSampled = 0;
+
+	for (int y = 0; y < height - 1; y += stride) {
+		for (int x = 0; x < width - 1; x += stride) {
+			int idx = y * width + x;
+			float z_curr = depthMeters[idx];
+			totalSampled++;
+
+			if (z_curr <= 0.0f || z_curr >= 999.0f) {
+				invalidCount++;
+				continue;
+			}
+
+			// Horizontal gradient
+			float z_right = depthMeters[idx + 1];
+			if (z_right > 0.0f && z_right < 999.0f) {
+				float diff_x = std::abs(z_right - z_curr);
+				// To isolate sensor noise and compression block artifacts,
+				// we only sum gradients in local areas that are relatively flat (< 0.15m gradient).
+				if (diff_x < 0.15f) {
+					sumGrad += diff_x;
+					gradCount++;
+				}
+			}
+
+			// Vertical gradient
+			float z_bottom = depthMeters[idx + width];
+			if (z_bottom > 0.0f && z_bottom < 999.0f) {
+				float diff_y = std::abs(z_bottom - z_curr);
+				if (diff_y < 0.15f) {
+					sumGrad += diff_y;
+					gradCount++;
+				}
+			}
+		}
+	}
+
+	float invalidRatio = (totalSampled > 0) ? (float)invalidCount / totalSampled : 0.0f;
+	float avgGradFlat = (gradCount > 0) ? (float)(sumGrad / gradCount) : 0.0f;
+
+	// Mathematically mapped formula:
+	// - Base clean margin is 10.0f
+	// - Scale factor based on local gradient noise (avgGradFlat)
+	// - Scale factor based on invalid pixel holes
+	float estimatedMargin = 10.0f + 6500.0f * avgGradFlat;
+	estimatedMargin *= (1.0f + 0.8f * invalidRatio);
+
+	// Clamp to safe margins [5.0f, 300.0f]
+	if (estimatedMargin < 5.0f) estimatedMargin = 5.0f;
+	if (estimatedMargin > 300.0f) estimatedMargin = 300.0f;
+
+	// Exponential Moving Average (EMA) to prevent screen flickering
+	float alpha = 0.08f;
+	smoothedTriangleMargin = alpha * estimatedMargin + (1.0f - alpha) * smoothedTriangleMargin;
+
+	// Update the geometry shader uniform
+	shaders.shader.use();
+	shaders.shader.setFloat("triangle_deletion_margin", smoothedTriangleMargin);
 }
 
 #endif APPLICATION_H

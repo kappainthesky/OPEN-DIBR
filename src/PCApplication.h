@@ -18,8 +18,6 @@ public:
 	glm::vec3 accumRotation = glm::vec3();
 
 private:
-	EyeTrackerReceiver eyeReceiver;
-	glm::vec3 eyeOffset = glm::vec3(0.0f);
 	bool useEyeTracking = false;
 };
 
@@ -208,8 +206,29 @@ bool PCApplication::HandleUserInput()
 
 	// Check eye tracker updates
 	float dx = 0.0f, dy = 0.0f, dz = 0.0f;
-	if (useEyeTracking && eyeReceiver.GetLatestEyeOffset(dx, dy, dz, 2.0f, 2.0f, 2.0f)) {
-		eyeOffset = glm::vec3(dx, dy, dz);
+	bool gotNewOffset = false;
+	if (useEyeTracking) {
+		gotNewOffset = eyeReceiver.GetLatestEyeOffset(dx, dy, dz, 1.0f, 1.0f, 1.0f);
+	}
+
+	if (useEyeTracking) {
+		int stateVal = eyeReceiver.GetLatestState();
+		if (stateVal == 0) { // TRACKING
+			if (gotNewOffset) {
+				eyeOffset = glm::vec3(dx, dy, dz);
+			}
+		}
+		else if (stateVal == 1) { // LOW_CONFIDENCE
+			// Freeze: keep last stable eyeOffset, do not update it.
+		}
+		else if (stateVal == 2) { // LOST
+			// Interpolate back to center (0, 0, 0)
+			eyeOffset = glm::mix(eyeOffset, glm::vec3(0.0f), 0.05f); // 5% per frame for smooth return
+		}
+		else if (stateVal == 3) { // RECALIBRATING
+			// Wait: interpolate back to center during recalibration
+			eyeOffset = glm::mix(eyeOffset, glm::vec3(0.0f), 0.1f);
+		}
 	}
 
 	accumRotation += rotation;
@@ -225,6 +244,47 @@ bool PCApplication::HandleUserInput()
 	glm::mat4 posMat = glm::translate(glm::mat4(1.0f), pcOutputCamera.pos + accumMovement + rotatedEyeOffset);
 	pcOutputCamera.model = posMat * pcOutputCamera.startRotMat * rotMat;
 	pcOutputCamera.view = glm::inverse(pcOutputCamera.model);
+
+	// Off-Axis Projection Matrix calculation for True Windowed 6DoF
+	if (useEyeTracking) {
+		float dbaseline = eyeReceiver.GetBaselineDistance(); // baseline distance from eye to screen in meters
+		float W = dbaseline * (float)pcOutputCamera.res_x / pcOutputCamera.focal_x;
+		float H = dbaseline * (float)pcOutputCamera.res_y / pcOutputCamera.focal_y;
+
+		// eyeOffset is (dx, dy, dz) in meters
+		float xe = eyeOffset.x;
+		float ye = eyeOffset.y;
+		float ze = eyeOffset.z + dbaseline; // eye distance to screen plane
+
+		// Avoid division by zero or negative distance if user gets too close
+		if (ze < 0.1f) ze = 0.1f;
+
+		float n = pcOutputCamera.z_near;
+		float f = pcOutputCamera.z_far;
+
+		// Scale factor to near plane
+		float s = n / ze;
+
+		float l = (-W / 2.0f - xe) * s;
+		float r = (W / 2.0f - xe) * s;
+		float b = (-H / 2.0f - ye) * s;
+		float t = (H / 2.0f - ye) * s;
+
+		// Build the off-axis projection matrix (column-major)
+		glm::mat4 proj = glm::mat4(0.0f);
+		proj[0][0] = 2.0f * n / (r - l);
+		proj[1][1] = 2.0f * n / (t - b);
+		proj[2][0] = (r + l) / (r - l);
+		proj[2][1] = (t + b) / (t - b);
+		proj[2][2] = -(f + n) / (f - n);
+		proj[2][3] = -1.0f;
+		proj[3][2] = -2.0f * f * n / (f - n);
+
+		pcOutputCamera.projectionLeft = proj;
+		pcOutputCamera.useOffAxis = true;
+	} else {
+		pcOutputCamera.useOffAxis = false;
+	}
 
 	return bRet;
 }
