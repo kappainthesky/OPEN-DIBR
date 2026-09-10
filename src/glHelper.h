@@ -69,7 +69,7 @@ public:
 		shader.setFloat("convertYCbCrToRGB", options.saveOutputImages ? 0.0f : 1.0f);
 		shader.setFloat("blendingThreshold", 0.001f + options.blendingFactor * 0.004f);
 		shader.setFloat("isFirstInput", 1.0f);
-		shader.setFloat("isYCbCr", options.usePNGs? 0.0f : 1.0f);
+		shader.setFloat("isYCbCr", (options.usePNGs || options.useRealSenseInput) ? 0.0f : 1.0f);
 		shader.setFloat("width", float(input.res_x));
 		shader.setFloat("height", float(input.res_y));
 		shader.setFloat("projection_type", input.projection == Projection::Perspective ? 0.0f : (input.projection == Projection::Equirectangular ? 0.5f : 1.0f));

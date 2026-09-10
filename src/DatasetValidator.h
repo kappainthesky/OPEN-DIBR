@@ -16,7 +16,7 @@ class Options;
 
 class DatasetValidator {
 public:
-    static bool Validate(const std::vector<InputCamera>& inputCameras, bool usePNGs, bool useGStreamerInput = false, float default_z_near = 0.1f) {
+    static bool Validate(const std::vector<InputCamera>& inputCameras, bool usePNGs, bool useGStreamerInput = false, bool useRealSenseInput = false, float default_z_near = 0.1f) {
         std::cout << "\n=============================================" << std::endl;
         std::cout << "        [DatasetValidator] Starting Sanity Check..." << std::endl;
         std::cout << "=============================================" << std::endl;
@@ -72,7 +72,7 @@ public:
             bool colorExists = FileExists(cam.pathColor);
             bool depthExists = FileExists(cam.pathDepth);
 
-            if (!useGStreamerInput) {
+            if (!useGStreamerInput && !useRealSenseInput) {
                 if (!colorExists) {
                     std::cout << "[CRITICAL ERROR] Missing color video/image file: " << cam.pathColor << std::endl;
                     std::cout << " -> Artifact: Rendering crash due to null pointer dereference in video demuxer/image loader." << std::endl;
@@ -83,6 +83,8 @@ public:
                     std::cout << " -> Artifact: Missing geometry reference; 3D warping cannot be performed." << std::endl;
                     hasCriticalError = true;
                 }
+            } else if (useRealSenseInput) {
+                std::cout << "[INFO] Live RealSense camera input active: bypassing disk file existence check for " << cam.pathColor << std::endl;
             } else {
                 std::cout << "[INFO] Live GStreamer input active: bypassing disk file existence check for " << cam.pathColor << std::endl;
             }

@@ -197,6 +197,85 @@ Run C++ standalone test receiver:
 
 
 ===========================================================
+INTEL REALSENSE LIVE CAMERA (LOCAL RGB-D INPUT)
+===========================================================
+
+[0] Run 3-Camera Extrinsic Screen Calibration (D455 Left + D455 Right + D435 Helper)
+
+3-Camera Screen Calibration (Calibrates all 3 cameras to Screen Center):
+python3 calibrate_3cams_screen.py --frames 40
+
+Alternative 3D Feature Calibration:
+python3 calibrate_screen_multicam.py --frames 50
+
+Checkerboard Calibration (Hold standard 9x6 checkerboard):
+python3 calibrate_multicam.py --mode checkerboard --board-w 9 --board-h 6 --square-size 0.025 --frames 30
+
+-----------------------------------------------------------
+
+[1] Run OpenDIBR with Live Intel RealSense Cameras + Real-Time Eye Tracking (Calibrated Multi-View)
+
+Linux:
+./run_live_with_eyetrack.sh
+
+-----------------------------------------------------------
+
+[2] Run OpenDIBR with Live Intel RealSense Cameras (Manual Navigation Only)
+
+Linux:
+./build/RealtimeDIBR --realsense -j examples/realsense/camera_config.json
+
+Windows:
+.\RealtimeDIBR.exe --realsense -j examples/realsense/camera_config.json
+
+-----------------------------------------------------------
+
+[3] Real-Time Interactive Debug View Hotkeys (Press in OpenDIBR window):
+  '1' -> Full Multi-View Blended Novel View (Final OpenDIBR output)
+  '2' -> D455 Left Camera Mesh Only (Camera 0 isolated)
+  '3' -> D455 Right Camera Mesh Only (Camera 1 isolated)
+  '4' -> Combined Mesh (Left + Right, Z-Test, no angle weighting)
+  '5' -> Depth Heatmap (Jet Colormap: Red=Near, Green=Mid, Blue=Far)
+  '6' -> Invalid Depth Mask (Red=Zero/Holes/Invalid, Green=Valid)
+  '7' -> RGB Sensor Video Feed Only (Direct RGB texture)
+  '8' -> Stereo Anaglyph Overlap (Left=Red, Right=Cyan)
+  'F' -> Toggle Disparity Domain Filtering (ON / OFF)
+  'S' -> Toggle Spatial Bilateral Depth Filter (ON / OFF)
+  'T' -> Toggle Temporal Persistency Depth Filter (ON / OFF)
+  'U' -> Toggle Hole Filling Depth Filter (ON / OFF)
+  'G' / 'H' -> Decrease / Increase Triangle Deletion Margin (0.2 step)
+  'B' / 'N' -> Decrease / Increase Multi-View Blending Factor
+  'K' -> Recalibrate Eye-Tracking Center
+
+-----------------------------------------------------------
+
+[4] Run RealSense with Unlocked FPS (ASAP Mode)
+
+Linux:
+./build/RealtimeDIBR --realsense -j examples/realsense/camera_config.json --asap
+
+Windows:
+.\RealtimeDIBR.exe --realsense -j examples/realsense/camera_config.json --asap
+
+-----------------------------------------------------------
+
+[5] Run RealSense with Automatic Depth Noise Auto-Tuning
+
+Linux:
+./build/RealtimeDIBR --realsense -j examples/realsense/camera_config.json --auto_triangle_margin
+
+Windows:
+.\RealtimeDIBR.exe --realsense -j examples/realsense/camera_config.json --auto_triangle_margin
+
+-----------------------------------------------------------
+
+[6] Run RealSense with Custom Resolution / FPS
+
+Linux:
+./build/RealtimeDIBR --realsense -j examples/realsense/camera_config.json --rs-width 640 --rs-height 480 --rs-fps 30
+
+
+===========================================================
 PARAMETER EXPERIMENTS
 ===========================================================
 

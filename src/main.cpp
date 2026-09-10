@@ -10,6 +10,7 @@
 #include "cxxopts.hpp"
 #include "ioHelper.h"
 #include "AppDecUtils.h"
+#include "RealSenseReceiver.h"
 
 
 // From CMAKE preprocessor
@@ -60,6 +61,12 @@ public:
 	int depthPort = 5001;           // TCP port for depth stream
 	std::string host = "127.0.0.1"; // Host IP address for TCP stream
 
+	bool useRealSenseInput = false; // if true, capture live synchronized RGB-D frames from Intel RealSense camera
+	int rsWidth = 640;
+	int rsHeight = 480;
+	int rsFps = 30;
+	RealSenseFilterConfig rsFilterConfig;
+
 	// some tunable shader uniforms:
 	float triangle_deletion_margin = 10.0f;        // used in geometry shader for the threshold for stretched triangle deletion
 	float depth_diff_threshold_fragment = 0.05f;   // threshold used in geometry shader to determine which elongated triangles should be deleted
@@ -67,7 +74,7 @@ public:
 	float image_border_threshold_fragment = 0.0f;  // used in fragment shader, expressed in nr pixels
 												   // determines the width of the border along the input images where pixels are blended
 	bool autoTriangleMargin = false;               // automatically calculate margin based on depth quality
-
+	int debugMode = 0;                             // 0=blended, 1=left only, 2=right only, 3=depth heatmap, 4=invalid mask, 5=stereo difference
 
 public:
 
@@ -82,6 +89,25 @@ public:
 		options.add_options("Input videos/images")
 			("i,input_dir", "Path to the folder that contains the light field images/videos", cxxopts::value<std::string>())
 			("j,input_json", "Path to the .json file with the input light field camera parameters", cxxopts::value<std::string>())
+			;
+		options.add_options("Intel RealSense Live Camera")
+			("realsense", "Use live Intel RealSense camera RGB-D input")
+			("realsense-input", "Use live Intel RealSense camera RGB-D input")
+			("rs-width", "RealSense stream width", cxxopts::value<int>()->default_value("640"))
+			("rs-height", "RealSense stream height", cxxopts::value<int>()->default_value("480"))
+			("rs-fps", "RealSense stream framerate", cxxopts::value<int>()->default_value("30"))
+			("rs-spatial", "Enable RealSense spatial filter (default: true)")
+			("no-rs-spatial", "Disable RealSense spatial filter")
+			("rs-temporal", "Enable RealSense temporal filter (default: true)")
+			("no-rs-temporal", "Disable RealSense temporal filter")
+			("rs-hole-filling", "Enable RealSense hole filling filter (default: true)")
+			("no-rs-hole-filling", "Disable RealSense hole filling filter")
+			("rs-spatial-alpha", "Spatial filter alpha", cxxopts::value<float>()->default_value("0.5"))
+			("rs-spatial-delta", "Spatial filter delta", cxxopts::value<float>()->default_value("20.0"))
+			("rs-temporal-alpha", "Temporal filter alpha", cxxopts::value<float>()->default_value("0.4"))
+			("rs-temporal-delta", "Temporal filter delta", cxxopts::value<float>()->default_value("20.0"))
+			("rs-hole-mode", "Hole filling mode (1: farthest, 2: nearest)", cxxopts::value<int>()->default_value("2"))
+			("rs-diagnostics", "Print periodic live RealSense depth diagnostics to console")
 			;
 		options.add_options("VR")
 			("vr", "Render the output to a VR headset")
@@ -114,6 +140,7 @@ public:
 			("blending_factor", "The higher this factor, the more blending between inputs there is, as an int in [0,10]", cxxopts::value<int>()->default_value("1"))
 			("triangle_deletion_margin", "The higher this value, the less strict the threshold for deletion of stretched triangles.", cxxopts::value<float>()->default_value("10.0"))
 			("auto_triangle_margin", "Automatically calculate the triangle deletion margin based on depth map quality.")
+			("debug_mode", "Debug visualizer mode (0=Blended DIBR, 1=Left Only, 2=Right Only, 3=Combined Mesh, 4=Depth Heatmap, 5=Invalid Mask, 6=RGB Feed, 7=Stereo Anaglyph)", cxxopts::value<int>()->default_value("0"))
 			;
 		options.add_options("Output camera settings")
 			// output camera
@@ -224,6 +251,37 @@ public:
 				exit(-1);
 			}
 		}
+		if (result.count("debug_mode")) {
+			debugMode = result["debug_mode"].as<int>();
+			std::cout << "[Debug Mode Initialized]: " << debugMode << std::endl;
+		}
+
+		if (result.count("no-rs-spatial")) rsFilterConfig.enableSpatial = false;
+		if (result.count("no-rs-temporal")) rsFilterConfig.enableTemporal = false;
+		if (result.count("no-rs-hole-filling")) rsFilterConfig.enableHoleFilling = false;
+		if (result.count("rs-spatial-alpha")) rsFilterConfig.spatialAlpha = result["rs-spatial-alpha"].as<float>();
+		if (result.count("rs-spatial-delta")) rsFilterConfig.spatialDelta = result["rs-spatial-delta"].as<float>();
+		if (result.count("rs-temporal-alpha")) rsFilterConfig.temporalAlpha = result["rs-temporal-alpha"].as<float>();
+		if (result.count("rs-temporal-delta")) rsFilterConfig.temporalDelta = result["rs-temporal-delta"].as<float>();
+		if (result.count("rs-hole-mode")) rsFilterConfig.holeFillingMode = result["rs-hole-mode"].as<int>();
+		if (result.count("rs-diagnostics")) rsFilterConfig.enableDiagnostics = true;
+
+		if (useRealSenseInput) {
+			bool explicitlyProvided = false;
+			for (int i = 1; i < argc; ++i) {
+				std::string arg(argv[i]);
+				if (arg == "--triangle_deletion_margin") {
+					explicitlyProvided = true;
+					break;
+				}
+			}
+			if (!explicitlyProvided && !autoTriangleMargin) {
+				triangle_deletion_margin = 6.0f;
+				image_border_threshold_fragment = 40.0f;
+				std::cout << "[RealSense Auto-Tune] Live RealSense camera input: Setting triangle_deletion_margin = 6.0f, border feathering = 40px for seamless multi-view blending." << std::endl;
+			}
+		}
+
 		// Automatically check if input dataset is the test dataset and set margin to 150.0f
 		std::string normalizedPath = inputPath;
 		for (size_t i = 0; i < normalizedPath.length(); ++i) {
@@ -313,6 +371,20 @@ private:
 
 	// filter out common errors in the user-provided files and paths
 	bool inputAndOutputFilesOK(cxxopts::ParseResult result) {
+		if (result.count("realsense") || result.count("realsense-input")) {
+			useRealSenseInput = true;
+			std::cout << "[RealSense] Enabled live Intel RealSense camera input mode." << std::endl;
+		}
+		if (result.count("rs-width")) {
+			rsWidth = result["rs-width"].as<int>();
+		}
+		if (result.count("rs-height")) {
+			rsHeight = result["rs-height"].as<int>();
+		}
+		if (result.count("rs-fps")) {
+			rsFps = result["rs-fps"].as<int>();
+		}
+
 		if (result.count("gstreamer-input")) {
 			useGStreamerInput = true;
 			std::cout << "[GStreamer] Enabled live GStreamer TCP input mode." << std::endl;
@@ -344,6 +416,9 @@ private:
 				} catch (...) {}
 			}
 		}
+		else if (useRealSenseInput) {
+			inputJsonPath = cmakelists_dir + "/examples/realsense/camera_config.json";
+		}
 		else {
 			std::cout << "Missing required argument -j or --input_json" << std::endl;
 			return false;
@@ -352,7 +427,7 @@ private:
 		{
 			inputPath = result["input_dir"].as<std::string>();
 		}
-		else if (useGStreamerInput) {
+		else if (useGStreamerInput || useRealSenseInput) {
 			inputPath = "./";
 		}
 		else {
@@ -383,7 +458,7 @@ private:
 			return false;
 		}
 		// check if inputPath and outputPath and the folder that contains fpsCsvPath are existing folders
-		if (!useGStreamerInput && !dirExists(inputPath)) {
+		if (!useGStreamerInput && !useRealSenseInput && !dirExists(inputPath)) {
 			std::cout << "Error: could not find folder " << inputPath << std::endl;
 			return false;
 		}
@@ -453,7 +528,10 @@ private:
 			return false;
 		}
 
-		if (useGStreamerInput) {
+		if (useRealSenseInput) {
+			usePNGs = false;
+		}
+		else if (useGStreamerInput) {
 			usePNGs = false;
 			ShowDecoderCapability();
 		}

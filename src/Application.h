@@ -43,6 +43,7 @@
 #include "stb_image.h"
 #include "FFmpegDemuxer.h"
 #include "GStreamerReceiver.h"
+#include "RealSenseReceiver.h"
 #include "shader.h"
 #include "ioHelper.h"
 #include "DatasetValidator.h"
@@ -74,6 +75,7 @@ public:
 	virtual void SetupCompanionWindow();
 	void SetupYUV420Textures(int texture_height, int luma_height);
 	bool SetupRGBTextures();
+	bool SetupRealSenseTextures();
 	void SetupCUgraphicsResources();
 	bool SetupDecodingPool();
 
@@ -145,6 +147,7 @@ protected:
 	float lastBlendingTimeMs = 0.0f;
 
 	EyeTrackerReceiver eyeReceiver;
+	RealSenseReceiver realSenseReceiver;
 	glm::vec3 eyeOffset = glm::vec3(0.0f);
 
 	float smoothedTriangleMargin = 10.0f;
@@ -247,8 +250,49 @@ bool Application::BInit()
 bool Application::BInitGL()
 {
 	// Run Dataset Validation
-	if (!DatasetValidator::Validate(inputCameras, options.usePNGs, options.useGStreamerInput)) {
+	if (!DatasetValidator::Validate(inputCameras, options.usePNGs, options.useGStreamerInput, options.useRealSenseInput)) {
 		return false;
+	}
+
+	if (options.useRealSenseInput) {
+		if (!realSenseReceiver.Start(inputCameras, options.rsFilterConfig)) {
+			std::cerr << "[Application] Failed to initialize RealSense camera(s)!" << std::endl;
+			return false;
+		}
+
+		if (options.viewport.res_x > 0 && options.viewport.res_y > 0) {
+			pcOutputCamera = options.viewport;
+		} else if (inputCameras.size() > 0) {
+			pcOutputCamera.res_x = inputCameras[0].res_x;
+			pcOutputCamera.res_y = inputCameras[0].res_y;
+			pcOutputCamera.focal_x = inputCameras[0].focal_x;
+			pcOutputCamera.focal_y = inputCameras[0].focal_y;
+			pcOutputCamera.principal_point_x = inputCameras[0].principal_point_x;
+			pcOutputCamera.principal_point_y = inputCameras[0].principal_point_y;
+		}
+
+		SetupCameras(); // needs to go first
+		SetupStereoRenderTargets();
+		if (!CreateAllShaders(0.0f))
+			return false;
+
+		if (!SetupRealSenseTextures()) {
+			return false;
+		}
+		SetupCompanionWindow();
+
+		// Capture first frame as warmup
+		std::vector<const uint8_t*> pRgbs;
+		std::vector<const uint16_t*> pDepths;
+		if (realSenseReceiver.CaptureAllFrames(pRgbs, pDepths, 3000)) {
+			for (size_t i = 0; i < pRgbs.size() && i < inputCameras.size(); i++) {
+				glBindTexture(GL_TEXTURE_2D, textures_color[i]);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inputCameras[i].res_x, inputCameras[i].res_y, GL_RGB, GL_UNSIGNED_BYTE, pRgbs[i]);
+				glBindTexture(GL_TEXTURE_2D, textures_depth[i]);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inputCameras[i].res_x, inputCameras[i].res_y, GL_RED, GL_UNSIGNED_SHORT, pDepths[i]);
+			}
+		}
+		return true;
 	}
 
 	// the chroma data is stored "chroma_offset" rows below the luma data
@@ -293,6 +337,10 @@ void Application::Shutdown()
 		}
 	}
 
+	if (options.useRealSenseInput) {
+		realSenseReceiver.Stop();
+	}
+
 	if (options.useGStreamerInput && demuxers.size() >= 2) {
 		GStreamerReceiver* rgbRec = dynamic_cast<GStreamerReceiver*>(demuxers[0]);
 		GStreamerReceiver* depthRec = dynamic_cast<GStreamerReceiver*>(demuxers[1]);
@@ -314,13 +362,13 @@ void Application::Shutdown()
 		}
 	}
 
-	if (!options.isStatic) {
+	if (!options.isStatic && !options.useRealSenseInput) {
 		pool.cleanup();
 	}
 
 	framebuffers.cleanup();
 
-	if (!options.usePNGs) {
+	if (!options.usePNGs && !options.useRealSenseInput) {
 		for (auto& glGraphicsResource : glGraphicsResources) {
 			ck(cuGraphicsUnregisterResource(*glGraphicsResource));
 			delete glGraphicsResource;
@@ -640,6 +688,30 @@ bool Application::SetupRGBTextures() {
 	return true;
 }
 
+bool Application::SetupRealSenseTextures() {
+	textures_color = new GLuint[inputCameras.size()];
+	textures_depth = new GLuint[inputCameras.size()];
+	glGenTextures((GLsizei)inputCameras.size(), textures_color);
+	glGenTextures((GLsizei)inputCameras.size(), textures_depth);
+
+	for (size_t i = 0; i < inputCameras.size(); i++) {
+		glBindTexture(GL_TEXTURE_2D, textures_color[i]);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, inputCameras[i].res_x, inputCameras[i].res_y, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+		glBindTexture(GL_TEXTURE_2D, textures_depth[i]);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R16, inputCameras[i].res_x, inputCameras[i].res_y, 0, GL_RED, GL_UNSIGNED_SHORT, 0);
+	}
+	return true;
+}
+
 void Application::SetupCUgraphicsResources() {
 	ck(cuInit(0));
 
@@ -729,6 +801,65 @@ bool Application::RenderTarget(bool nextVideoFrame)
 {
 	glEnable(GL_DEPTH_TEST);
 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight);
+
+	if (options.useRealSenseInput) {
+		if (nextVideoFrame) {
+			std::vector<const uint8_t*> pRgbs;
+			std::vector<const uint16_t*> pDepths;
+			if (realSenseReceiver.CaptureAllFrames(pRgbs, pDepths, 2000)) {
+				for (size_t i = 0; i < pRgbs.size() && i < inputCameras.size(); i++) {
+					if (pRgbs[i] && pDepths[i]) {
+						glBindTexture(GL_TEXTURE_2D, textures_color[i]);
+						glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inputCameras[i].res_x, inputCameras[i].res_y, GL_RGB, GL_UNSIGNED_BYTE, pRgbs[i]);
+						glBindTexture(GL_TEXTURE_2D, textures_depth[i]);
+						glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inputCameras[i].res_x, inputCameras[i].res_y, GL_RED, GL_UNSIGNED_SHORT, pDepths[i]);
+					}
+				}
+			}
+		}
+
+		bool isFirstInput = true;
+		shaders.updateOutputParams(pcOutputCamera);
+		shaders.shader.setFloat("debugMode", (float)options.debugMode);
+
+		size_t startIdx = 0;
+		size_t endIdx = inputCameras.size();
+		if (options.debugMode == 1) { // Left camera only
+			startIdx = 0;
+			endIdx = std::min((size_t)1, inputCameras.size());
+		} else if (options.debugMode == 2) { // Right camera only
+			startIdx = std::min((size_t)1, inputCameras.size() - 1);
+			endIdx = inputCameras.size();
+		}
+
+		for (size_t i = startIdx; i < endIdx; i++) {
+			shaders.shader.setFloat("isFirstInput", isFirstInput ? 1.0f : 0.0f);
+			shaders.updateInputParams(inputCameras[i]);
+
+			if (options.autoTriangleMargin) {
+				AnalyzeDepthFrame((int)i);
+			}
+
+			if (currentVideoFrame == 0 || currentVideoFrame == 30) {
+				AlignmentVerifier::Verify(textures_color[i], textures_depth[i],
+				                          inputCameras[i].res_x, inputCameras[i].res_y,
+				                          inputCameras[i].bitdepth_depth,
+				                          inputCameras[i].z_near, inputCameras[i].z_far,
+				                          currentVideoFrame, (int)i, inputCameras[i].role);
+			}
+
+			RenderScene((int)i, isFirstInput);
+
+			if (isFirstInput) {
+				isFirstInput = false;
+			}
+		}
+
+		if (nextVideoFrame) {
+			currentVideoFrame++;
+		}
+		return true;
+	}
 
 	bool shouldUpdateUsedInputs = false;
 	if (nextVideoFrame) {
@@ -954,16 +1085,21 @@ void Application::AnalyzeDepthFrame(int inputIndex) {
 	float invalidRatio = (totalSampled > 0) ? (float)invalidCount / totalSampled : 0.0f;
 	float avgGradFlat = (gradCount > 0) ? (float)(sumGrad / gradCount) : 0.0f;
 
-	// Mathematically mapped formula:
-	// - Base clean margin is 10.0f
-	// - Scale factor based on local gradient noise (avgGradFlat)
-	// - Scale factor based on invalid pixel holes
-	float estimatedMargin = 10.0f + 6500.0f * avgGradFlat;
-	estimatedMargin *= (1.0f + 0.8f * invalidRatio);
+	float estimatedMargin = 10.0f;
 
-	// Clamp to safe margins [5.0f, 300.0f]
-	if (estimatedMargin < 5.0f) estimatedMargin = 5.0f;
-	if (estimatedMargin > 300.0f) estimatedMargin = 300.0f;
+	if (options.useRealSenseInput) {
+		// Calibrated physical metric depth auto-margin: optimal range [4.0f, 12.0f]
+		estimatedMargin = 5.0f + 150.0f * avgGradFlat;
+		estimatedMargin *= (1.0f + 1.0f * invalidRatio);
+		if (estimatedMargin < 4.0f) estimatedMargin = 4.0f;
+		if (estimatedMargin > 12.0f) estimatedMargin = 12.0f;
+	} else {
+		// Legacy 8-bit dataset formula: safe margins [5.0f, 300.0f]
+		estimatedMargin = 10.0f + 6500.0f * avgGradFlat;
+		estimatedMargin *= (1.0f + 0.8f * invalidRatio);
+		if (estimatedMargin < 5.0f) estimatedMargin = 5.0f;
+		if (estimatedMargin > 300.0f) estimatedMargin = 300.0f;
+	}
 
 	// Exponential Moving Average (EMA) to prevent screen flickering
 	float alpha = 0.08f;

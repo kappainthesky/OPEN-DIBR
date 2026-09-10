@@ -34,22 +34,38 @@ uniform float triangle_deletion_margin;
 
 void main()
 {
-    // discard triangles that connect vertices with very different depth values
-	float largest_depth_diff = max(abs(vertices[0].inputDepth-vertices[1].inputDepth), max( abs(vertices[0].inputDepth-vertices[2].inputDepth), abs(vertices[1].inputDepth-vertices[2].inputDepth)));
-	float largest_depth = max(vertices[0].inputDepth, max(vertices[1].inputDepth, vertices[2].inputDepth));
+	// Discard triangles that contain invalid / hole vertices
+	if (vertices[0].worldPosition.w < 0.0 || vertices[1].worldPosition.w < 0.0 || vertices[2].worldPosition.w < 0.0) {
+		return;
+	}
 
-	float estimated_error = triangle_deletion_factor * (largest_depth - near_far[0]) * (largest_depth - near_far[0]);
+	float d0 = vertices[0].inputDepth;
+	float d1 = vertices[1].inputDepth;
+	float d2 = vertices[2].inputDepth;
 
-	bool condition1 = largest_depth_diff < triangle_deletion_margin * estimated_error + 0.01f;
+	// Check bounds against near and far clipping planes
+	if (d0 < near_far[0] || d1 < near_far[0] || d2 < near_far[0] ||
+	    d0 > near_far[1] || d1 > near_far[1] || d2 > near_far[1]) {
+		return;
+	}
 
+	// Discard triangles that connect vertices with very different depth values (foreground-to-background stretching)
+	float min_depth = min(d0, min(d1, d2));
+	float max_depth = max(d0, max(d1, d2));
+	float largest_depth_diff = max_depth - min_depth;
 
-	// discard triangles that fall outside the projection volume or have invalid depth
-	bool condition2 = !(vertices[0].worldPosition.w < 0 || vertices[1].worldPosition.w < 0 || vertices[2].worldPosition.w < 0);
-	bool condition3 = (vertices[0].inputDepth < near_far[1] - 0.05f) && (vertices[1].inputDepth < near_far[1] - 0.05f) && (vertices[2].inputDepth < near_far[1] - 0.05f);
+	float estimated_error = triangle_deletion_factor * (max_depth - near_far[0]) * (max_depth - near_far[0]);
 
-	// pass the triangle to the fragment shader iff all conditions are true
-	if(condition1 && condition2 && condition3){ 
-		for(int i = 0; i < 3; i++){
+	// Robust depth jump threshold:
+	// For 16-bit depth sensors (RealSense), use calibrated depth-dependent discontinuity rejection
+	// For 8-bit datasets, preserve legacy error scaling
+	float thresh = triangle_deletion_margin * (0.040f + 0.035f * pow(max(0.1f, max_depth), 1.5f));
+	if (triangle_deletion_factor > 0.0001f) {
+		thresh = triangle_deletion_margin * estimated_error + 0.02f;
+	}
+
+	if (largest_depth_diff < thresh) { 
+		for (int i = 0; i < 3; i++) {
 			frag.TexCoord = vertices[i].TexCoord;
 			frag.angle = vertices[i].angle;
 			frag.outputDepth = vertices[i].outputDepth;

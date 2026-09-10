@@ -1,0 +1,108 @@
+{
+  "Axial_system": "OPENGL",
+  "cameras": [
+    {
+      "NameColor": "viewport",
+      "NameDepth": "viewport",
+      "Position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Resolution": [
+        1280,
+        720
+      ],
+      "Focal": [
+        766.00,
+        765.10
+      ],
+      "Principle_point": [
+        650.10,
+        360.00
+      ],
+      "Depth_range": [
+        0.35,
+        4.5
+      ],
+      "Projection": "Perspective",
+      "BitDepthColor": 8,
+      "BitDepthDepth": 16
+    },
+    {
+      "NameColor": "realsense_main",
+      "NameDepth": "realsense_main",
+      "SerialNumber": "215122252978",
+      "Role": "render_main",
+      "Position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "Resolution": [
+        640,
+        480
+      ],
+      "Focal": [
+        383.83508301,
+        379.02783292
+      ],
+      "Principle_point": [
+        325.05133057,
+        239.86187744
+      ],
+      "Depth_range": [
+        0.35,
+        4.5
+      ],
+      "Projection": "Perspective",
+      "BitDepthColor": 8,
+      "BitDepthDepth": 16
+    },
+    {
+      "NameColor": "realsense_secondary",
+      "NameDepth": "realsense_secondary",
+      "SerialNumber":"215122255078",
+      "Role": "render_secondary",
+      "Position": [
+        -0.2998526623162289,
+    -0.37099947326374916,
+    -0.020581295891330176
+      ],
+      "Rotation": [
+         -2.097769954672529,
+    -9.13020825217005,
+    -1.1883810566765005
+      ],
+      "Resolution": [
+        640,
+        480
+      ],
+      "Focal": [
+        385.31158447,
+        384.86346436
+      ],
+      "Principle_point": [
+        322.39089966,
+        239.84091187
+      ],
+      "Depth_range": [
+        0.35,
+        4.5
+      ],
+      "Projection": "Perspective",
+      "BitDepthColor": 8,
+      "BitDepthDepth": 16
+    }
+  ]
+}

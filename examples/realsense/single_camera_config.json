@@ -1,0 +1,35 @@
+{
+  "Axial_system": "OPENGL",
+  "cameras": [
+    {
+      "NameColor": "viewport",
+      "NameDepth": "viewport",
+      "Position": [0.0, 0.0, 0.0],
+      "Rotation": [0.0, 0.0, 0.0],
+      "Resolution": [1280, 720],
+      "Focal": [766.00, 765.10],
+      "Principle_point": [650.10, 360.00],
+      "Depth_range": [0.35, 4.5],
+      "Projection": "Perspective",
+      "BitDepthColor": 8,
+      "BitDepthDepth": 16
+    },
+    {
+      "NameColor": "realsense_main",
+      "NameDepth": "realsense_main",
+      "SerialNumber": "215122252978",
+      "Role": "render_main",
+      "Position": [0.0, 0.0, 0.0],
+      "Rotation": [0.0, 0.0, 0.0],
+      "Resolution": [640, 480],
+      "Focal": [383.83508301,
+    379.02783292],
+      "Principle_point": [325.05133057,
+    239.86187744],
+      "Depth_range": [0.35, 4.5],
+      "Projection": "Perspective",
+      "BitDepthColor": 8,
+      "BitDepthDepth": 16
+    }
+  ]
+}

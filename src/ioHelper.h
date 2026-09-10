@@ -53,6 +53,8 @@ class InputCamera {
 public:
 	std::string pathColor;
 	std::string pathDepth;
+	std::string serial_number = "";
+	std::string role = "render";
 	glm::vec3 pos = glm::vec3();
 	glm::vec3 rot = glm::vec3();
 	glm::mat4 model = glm::mat4();
@@ -87,6 +89,12 @@ public:
 				pathColor = directory + params[k].get<std::string>();
 				k = "NameDepth";
 				pathDepth = directory + params[k].get<std::string>();
+			}
+			if (params.contains("SerialNumber")) {
+				serial_number = params["SerialNumber"].get<std::string>();
+			}
+			if (params.contains("Role")) {
+				role = params["Role"].get<std::string>();
 			}
 			k = "Position";
 			pos = glm::vec3(

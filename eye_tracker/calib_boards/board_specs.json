@@ -1,0 +1,38 @@
+{
+  "print_board": {
+    "role": "main<->helper bridging (shared physical board)",
+    "dictionary": "DICT_5X5_1000",
+    "squares_x": 8,
+    "squares_y": 6,
+    "square_length_m": 0.03,
+    "marker_length_m": 0.022,
+    "print_dpi": 300,
+    "expected_physical_size_mm": [
+      240.0,
+      180.0
+    ],
+    "file": "print_board_main_helper.png"
+  },
+  "screen_board": {
+    "role": "helper->screen calibration (displayed on monitor)",
+    "dictionary": "DICT_4X4_50",
+    "squares_x": 10,
+    "squares_y": 6,
+    "square_length_m": 0.025,
+    "marker_length_m": 0.01875,
+    "assumed_monitor": {
+      "diagonal_inches": 27.0,
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pixel_pitch_mm": 0.31132
+    },
+    "expected_physical_size_on_screen_mm": [
+      250.0,
+      150.0
+    ],
+    "must_display_at": "100% scale, fullscreen, no OS display scaling / no image viewer zoom",
+    "file": "screen_board_helper_to_screen.png"
+  }
+}

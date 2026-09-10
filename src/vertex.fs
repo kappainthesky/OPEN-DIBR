@@ -46,85 +46,85 @@ void main()
 	vertex.TexCoord = aTexCoords;
 
 	// get the depth value in [0,1]
-	float depth = texture(depthTex, aTexCoords).x;
+	float depthRaw = texture(depthTex, aTexCoords).x;
 
-	// convert to depth in [near, far] (in meters) by scaling with near and far planes
-	depth = 1.0 / (1.0f / near_far[1] + depth * ( 1.0f / near_far[0] - 1.0f / near_far[1]));
-	depth = min(depth, 1000.0f);
-	vertex.inputDepth = depth;
+	if (depthRaw <= 0.00001f) {
+		// Explicit hole / invalid depth marker
+		vertex.inputDepth = 9999.0f;
+		vertex.worldPosition = vec4(0.0, 0.0, 0.0, -1.0);
+		vertex.outputDepth = 9999.0f;
+		vertex.angle = 1.0f;
+		gl_Position = vec4(0.0, 0.0, -10.0, 1.0);
+	} else {
+		// convert to depth in [near, far] (in meters) by scaling with near and far planes
+		float depth = 1.0 / (1.0f / near_far[1] + depthRaw * ( 1.0f / near_far[0] - 1.0f / near_far[1]));
+		depth = min(depth, 1000.0f);
+		vertex.inputDepth = depth;
 
-	// unproject to find the worldPosition of the current pixel
-	vec4 worldPosition;
-	// perspective unprojection
-	if(projection_type < 0.2f){
-		if(depth > 0){
+		// unproject to find the worldPosition of the current pixel
+		vec4 worldPosition;
+		// perspective unprojection
+		if(projection_type < 0.2f){
 			float x = (aTexCoords.x * width - in_pp.x) / in_f.x * depth;
 			float y = ((1.0f-aTexCoords.y) * height - (in_pp.y + 2.0f * (height * 0.5f - in_pp.y))) / in_f.y * depth;
 
-			vec4 localPosition = vec4(x,y,-depth,1.0f);
+			vec4 localPosition = vec4(x, y, -depth, 1.0f);
 			worldPosition = model * localPosition;
-		}
-		else {
-			worldPosition = vec4(0,0,-10,1);
-		}
-		worldPosition = worldPosition / worldPosition.w;
-	}
-	// equirectangular unprojection
-	else if (projection_type < 0.7f) {
-		float phi = hor_range.y - (hor_range.y - hor_range.x) * aTexCoords.x ;
-		float theta = ver_range.y - (ver_range.y - ver_range.x) * aTexCoords.y;
-		float x = -cos(theta) * sin(phi) * depth;
-		float y = sin(theta) * depth;
-		float z = -cos(theta) * cos(phi) * depth;
-
-		worldPosition = model * vec4(x, y, z, 1.0f); 
-		worldPosition = worldPosition / worldPosition.w;
-	}
-	// fisheye equidistant unprojection
-	else {
-		vec2 coords = vec2(2.0f * aTexCoords.x - 1.0f, 2.0f * aTexCoords.y - 1.0f);
-		// r in [0,1]
-		float r = length(coords);
-		// theta in [0, fov/2], phi in [-pi/2 , pi/2]
-		float theta = r * fov * 0.5f;
-		vec2 coords_norm = r > 0 ? coords / r : vec2(0,0);
-		float x = depth * sin(theta) * coords_norm.x;// instead of depth * sin(theta) * sin(phi);
-		float y = -depth * sin(theta) * coords_norm.y;// instead of depth * sin(theta) * cos(phi);
-		float z = -depth * cos(theta);
- 
-		if(r < 1.0f){
-			worldPosition = model * vec4(x,y,z,1);
 			worldPosition = worldPosition / worldPosition.w;
 		}
-		else {
-			worldPosition = vec4(0,0,0,-1);
+		// equirectangular unprojection
+		else if (projection_type < 0.7f) {
+			float phi = hor_range.y - (hor_range.y - hor_range.x) * aTexCoords.x ;
+			float theta = ver_range.y - (ver_range.y - ver_range.x) * aTexCoords.y;
+			float x = -cos(theta) * sin(phi) * depth;
+			float y = sin(theta) * depth;
+			float z = -cos(theta) * cos(phi) * depth;
+
+			worldPosition = model * vec4(x, y, z, 1.0f); 
+			worldPosition = worldPosition / worldPosition.w;
 		}
-	}
-	vertex.worldPosition = worldPosition;
-	
-	// project onto the output image
-	vec4 viewPosition = view * worldPosition;
-	viewPosition = viewPosition / viewPosition.w;
-	vertex.outputDepth = length(viewPosition.xyz);
+		// fisheye equidistant unprojection
+		else {
+			vec2 coords = vec2(2.0f * aTexCoords.x - 1.0f, 2.0f * aTexCoords.y - 1.0f);
+			float r = length(coords);
+			float theta = r * fov * 0.5f;
+			vec2 coords_norm = r > 0 ? coords / r : vec2(0,0);
+			float x = depth * sin(theta) * coords_norm.x;
+			float y = -depth * sin(theta) * coords_norm.y;
+			float z = -depth * cos(theta);
+	 
+			if(r < 1.0f){
+				worldPosition = model * vec4(x,y,z,1);
+				worldPosition = worldPosition / worldPosition.w;
+			}
+			else {
+				worldPosition = vec4(0,0,0,-1);
+			}
+		}
+		vertex.worldPosition = worldPosition;
+		
+		// project onto the output image
+		vec4 viewPosition = view * worldPosition;
+		viewPosition = viewPosition / viewPosition.w;
+		vertex.outputDepth = length(viewPosition.xyz);
 
-	if(isVR > 0.5f || useOffAxis > 0.5f){
-		 gl_Position = project * viewPosition;
-	}
-	else if(viewPosition.z < 0){
-		float u = -viewPosition.x / viewPosition.z * out_f.x + out_pp.x;
-		float v = -viewPosition.y / viewPosition.z * out_f.y + (out_pp.y + 2.0f * (out_height * 0.5f - out_pp.y));
-		float normalised_depth = (-viewPosition.z - out_near_far.x) / (out_near_far.y - out_near_far.x);
-		gl_Position = vec4(2.0f * u / out_width - 1.0f, 2.0f * v / out_height - 1.0f, normalised_depth, 1.0f);
-	}
-	else {
-		gl_Position = vec4(0,0,-10,1);
-	}
+		if(isVR > 0.5f || useOffAxis > 0.5f){
+			 gl_Position = project * viewPosition;
+		}
+		else if(viewPosition.z < 0){
+			float u = -viewPosition.x / viewPosition.z * out_f.x + out_pp.x;
+			float v = -viewPosition.y / viewPosition.z * out_f.y + (out_pp.y + 2.0f * (out_height * 0.5f - out_pp.y));
+			float normalised_depth = (-viewPosition.z - out_near_far.x) / (out_near_far.y - out_near_far.x);
+			gl_Position = vec4(2.0f * u / out_width - 1.0f, 2.0f * v / out_height - 1.0f, normalised_depth, 1.0f);
+		}
+		else {
+			gl_Position = vec4(0,0,-10,1);
+		}
 
-	// give priority to vertices of which the angle 
-	// between points (outputCamera, worldPosition, inputCamera) is smaller
-	vec3 PO = outputCameraPos - worldPosition.xyz;
-	vec3 PI = inputCameraPos - worldPosition.xyz;
-	// calculate the cosine of the angle between the points (outputCamera, worldPosition, inputCamera) and add 1
-	vertex.angle = acos(dot(PO, PI) / length(PO) / length(PI)) / 3.15f;  // divide by 3.15 to scale to [0, 1)
-	//vertex.angle = min(max(vertex.angle, 0), 1);
+		// give priority to vertices of which the angle 
+		// between points (outputCamera, worldPosition, inputCamera) is smaller
+		vec3 PO = outputCameraPos - worldPosition.xyz;
+		vec3 PI = inputCameraPos - worldPosition.xyz;
+		vertex.angle = acos(dot(PO, PI) / max(0.0001f, length(PO) * length(PI))) / 3.15f;
+	}
 }
